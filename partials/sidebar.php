@@ -26,8 +26,8 @@ $logoLight = setting('logo_image_light');
                 <?php endif; ?>
             <?php else: ?>
                 <span class="d-inline-flex align-items-center justify-content-center bg-primary text-white rounded fw-bold flex-shrink-0"
-                      style="width:34px;height:34px;">CU</span>
-                <span class="text-body-emphasis fw-bolder mb-0 ms-2 fs-16 text-truncate">Camping&nbsp;UZ</span>
+                      style="width:34px;height:34px;">SN</span>
+                <span class="text-body-emphasis fw-bolder mb-0 ms-2 fs-16 text-truncate">Silk&nbsp;Naviora</span>
             <?php endif; ?>
         </a>
     </div>

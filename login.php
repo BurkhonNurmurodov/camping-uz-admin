@@ -53,7 +53,7 @@ $A = 'assets';
                     <?php endif; ?>
                 <?php else: ?>
                     <span class="d-inline-flex align-items-center justify-content-center bg-primary text-white rounded fw-bold fs-20"
-                          style="width:48px;height:48px;">CU</span>
+                          style="width:48px;height:48px;">SN</span>
                 <?php endif; ?>
                 <h4 class="mt-3 mb-0">Silk Naviora</h4>
                 <p class="text-muted fs-13">Admin panel</p>
