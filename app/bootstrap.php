@@ -8,4 +8,7 @@ define('UPLOAD_URL', getenv('UPLOAD_URL') ?: 'http://localhost:8000/uploads');
 define('IS_ADMIN_APP', true);
 
 // Load the main application bootstrap
+// Force the admin panel to use the main site's upload URL so images don't break
+define('UPLOAD_URL', 'https://silknaviora.com/uploads');
+
 require __DIR__ . '/../../camping-uz/app/bootstrap.php';
