@@ -13,7 +13,7 @@ $page['vendor_js'] = $page['vendor_js'] ?? [];
     <footer class="app-footer">
         <div class="container-fluid">
             <div class="d-flex justify-content-between align-items-center py-3 fs-13 text-muted">
-                <span>&copy; <?= date('Y') ?> Camping Uzbekistan</span>
+                <span>&copy; <?= date('Y') ?> Silk Naviora</span>
                 <span class="d-none d-md-block">Admin panel</span>
             </div>
         </div>

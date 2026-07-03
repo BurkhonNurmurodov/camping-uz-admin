@@ -21,7 +21,7 @@ $A = 'assets';
 <html lang="<?= e(current_lang()) ?>" data-bs-theme="light">
 <head>
     <meta charset="utf-8">
-    <title>Sign in | Camping Uzbekistan Admin</title>
+    <title>Sign in | Silk Naviora Admin</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <script type="module" src="<?= $A ?>/js/layout-setup.js"></script>
@@ -55,7 +55,7 @@ $A = 'assets';
                     <span class="d-inline-flex align-items-center justify-content-center bg-primary text-white rounded fw-bold fs-20"
                           style="width:48px;height:48px;">CU</span>
                 <?php endif; ?>
-                <h4 class="mt-3 mb-0">Camping Uzbekistan</h4>
+                <h4 class="mt-3 mb-0">Silk Naviora</h4>
                 <p class="text-muted fs-13">Admin panel</p>
             </div>
             <div class="card shadow-sm">
@@ -88,7 +88,7 @@ $A = 'assets';
                     </form>
                 </div>
             </div>
-            <p class="text-center fs-13 text-muted mt-3 mb-0">&copy; <?= date('Y') ?> Camping Uzbekistan</p>
+            <p class="text-center fs-13 text-muted mt-3 mb-0">&copy; <?= date('Y') ?> Silk Naviora</p>
         </div>
     </div>
 </div>

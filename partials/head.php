@@ -25,7 +25,7 @@ $nav_inbox_total = $nav_new_regs + $nav_new_privates + $nav_unread_msgs;
       data-content-width="default" dir="ltr" data-sidebar-color="light" data-sidebar="default">
 <head>
     <meta charset="utf-8">
-    <title><?= e($page['title']) ?> | Camping Uzbekistan Admin</title>
+    <title><?= e($page['title']) ?> | Silk Naviora Admin</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <meta name="csrf-token" content="<?= e(csrf_token()) ?>">

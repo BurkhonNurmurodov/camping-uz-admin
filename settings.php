@@ -83,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'test_telegram') {
-        $r = telegram_send('🔔 <b>Camping Uzbekistan</b> — test notification. If you can read this, notifications are configured correctly.');
+        $r = telegram_send('🔔 <b>Silk Naviora</b> — test notification. If you can read this, notifications are configured correctly.');
         if ($r['ok']) {
             flash('success', 'Test message sent — check your Telegram.');
         } else {

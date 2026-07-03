@@ -53,8 +53,8 @@ if ($adminCount === 0) {
 
 // 3) default settings
 $defaults = [
-    'agency_name_en' => 'Camping Uzbekistan',
-    'agency_name_ru' => 'Camping Uzbekistan',
+    'agency_name_en' => 'Silk Naviora',
+    'agency_name_ru' => 'Silk Naviora',
     'moto_en'        => 'Real journeys across Central Asia',
     'moto_ru'        => 'Настоящие путешествия по Центральной Азии',
     'hero_type'      => 'image',       // image | video
