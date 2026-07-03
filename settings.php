@@ -14,7 +14,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $heroType = input('hero_type') === 'video' ? 'video' : 'image';
         set_setting('hero_type', $heroType);
 
-        if ($async = input('async_hero_image')) {
+        if (input('remove_hero_image') == '1') {
+            delete_upload(setting('hero_image')); set_setting('hero_image', '');
+        } elseif ($async = input('async_hero_image')) {
             delete_upload(setting('hero_image')); set_setting('hero_image', $async);
         } elseif (!empty($_FILES['hero_image']['name'])) {
             [$ok, $res] = save_image($_FILES['hero_image'], 'hero', 10);
@@ -22,7 +24,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { flash('error', 'Hero image: ' . $res); }
         }
         
-        if ($async = input('async_hero_video')) {
+        if (input('remove_hero_video') == '1') {
+            delete_upload(setting('hero_video')); set_setting('hero_video', '');
+        } elseif ($async = input('async_hero_video')) {
             delete_upload(setting('hero_video')); set_setting('hero_video', $async);
         } elseif (!empty($_FILES['hero_video']['name'])) {
             [$ok, $res] = save_video($_FILES['hero_video'], 'hero', 60);
@@ -30,7 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { flash('error', 'Hero video: ' . $res); }
         }
 
-        if ($async = input('async_logo_image')) {
+        if (input('remove_logo_image') == '1') {
+            delete_upload(setting('logo_image')); set_setting('logo_image', '');
+        } elseif ($async = input('async_logo_image')) {
             delete_upload(setting('logo_image')); set_setting('logo_image', $async);
         } elseif (!empty($_FILES['logo_image']['name'])) {
             [$ok, $res] = save_image($_FILES['logo_image'], 'logo', 5);
@@ -38,7 +44,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { flash('error', 'Logo image: ' . $res); }
         }
 
-        if ($async = input('async_logo_image_light')) {
+        if (input('remove_logo_image_light') == '1') {
+            delete_upload(setting('logo_image_light')); set_setting('logo_image_light', '');
+        } elseif ($async = input('async_logo_image_light')) {
             delete_upload(setting('logo_image_light')); set_setting('logo_image_light', $async);
         } elseif (!empty($_FILES['logo_image_light']['name'])) {
             [$ok, $res] = save_image($_FILES['logo_image_light'], 'logo', 5);
@@ -162,7 +170,8 @@ $heroVideo = setting('hero_video');
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
                                 <div class="dnd-upload-subtext">JPG, PNG, WebP (≤10MB)</div>
-                                <input type="file" name="hero_image" accept="image/*">
+                                <input type="checkbox" name="remove_hero_image" id="rm_hero" value="1" class="d-none">
+                                <input type="file" name="hero_image" accept="image/*" data-remove-target="rm_hero">
                                 <div class="dnd-preview-container">
                                     <?php if ($heroImage): ?>
                                         <img src="<?= e(upload_url($heroImage)) ?>" class="dnd-preview-img">
@@ -179,7 +188,8 @@ $heroVideo = setting('hero_video');
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
                                 <div class="dnd-upload-subtext">MP4, WebM (≤60MB)</div>
-                                <input type="file" name="hero_video" accept="video/*">
+                                <input type="checkbox" name="remove_hero_video" id="rm_hero_vid" value="1" class="d-none">
+                                <input type="file" name="hero_video" accept="video/*" data-remove-target="rm_hero_vid">
                                 <div class="dnd-preview-container">
                                     <?php if ($heroVideo): ?>
                                         <span class="dnd-filename fw-bold text-success"><i class="ri-check-line"></i> Video uploaded</span>
@@ -207,7 +217,8 @@ $heroVideo = setting('hero_video');
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
                                 <div class="dnd-upload-subtext">PNG, JPG, WebP</div>
-                                <input type="file" name="logo_image" accept="image/*">
+                                <input type="checkbox" name="remove_logo_image" id="rm_logo" value="1" class="d-none">
+                                <input type="file" name="logo_image" accept="image/*" data-remove-target="rm_logo">
                                 <div class="dnd-preview-container">
                                     <?php if ($logoImage = setting('logo_image')): ?>
                                         <div class="p-2 bg-light rounded d-inline-block border">
@@ -229,7 +240,8 @@ $heroVideo = setting('hero_video');
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
                                 <div class="dnd-upload-subtext">PNG, JPG, WebP</div>
-                                <input type="file" name="logo_image_light" accept="image/*">
+                                <input type="checkbox" name="remove_logo_image_light" id="rm_logo_light" value="1" class="d-none">
+                                <input type="file" name="logo_image_light" accept="image/*" data-remove-target="rm_logo_light">
                                 <div class="dnd-preview-container">
                                     <?php if ($logoLight = setting('logo_image_light')): ?>
                                         <div class="p-2 bg-dark rounded d-inline-block">
