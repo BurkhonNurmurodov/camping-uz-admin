@@ -54,6 +54,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { flash('error', 'Logo Light: ' . $res); }
         }
 
+        if (input('remove_favicon') == '1') {
+            delete_upload(setting('favicon')); set_setting('favicon', '');
+        } elseif ($async = input('async_favicon')) {
+            delete_upload(setting('favicon')); set_setting('favicon', $async);
+        } elseif (!empty($_FILES['favicon']['name'])) {
+            [$ok, $res] = save_image($_FILES['favicon'], 'favicon', 2);
+            if ($ok) { delete_upload(setting('favicon')); set_setting('favicon', $res); }
+            else { flash('error', 'Favicon: ' . $res); }
+        }
+
         foreach ([
             'agency_name_en', 'agency_name_ru', 'moto_en', 'moto_ru',
             'social_instagram', 'social_telegram', 'social_facebook', 'social_whatsapp',
@@ -257,6 +267,30 @@ $heroVideo = setting('hero_video');
                                 </div>
                             </label>
                         </div>
+                        <div class="col-12">
+                            <label class="form-label">Favicon <span class="text-muted fs-12">(ICO/PNG/WebP, small size)</span></label>
+                            <label class="dnd-upload-wrap <?= setting('favicon') ? 'has-preview' : '' ?>">
+                                <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
+                                <div class="dnd-upload-text">Drag and drop or press to upload</div>
+                                <div class="dnd-upload-subtext">ICO, PNG, WebP</div>
+                                <input type="checkbox" name="remove_favicon" id="rm_favicon" value="1" class="d-none">
+                                <input type="file" name="favicon" accept="image/*,.ico" data-remove-target="rm_favicon">
+                                <div class="dnd-preview-container">
+                                    <?php if ($favicon = setting('favicon')): ?>
+                                        <div class="p-2 bg-light rounded d-inline-block border">
+                                            <img src="<?= e(upload_url($favicon)) ?>" style="max-height:32px">
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="dnd-loader">
+                                    <div class="dnd-progress">
+                                        <div class="dnd-progress-bar"></div>
+                                        <div class="dnd-progress-text">0%</div>
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+
                     </div>
                 </div>
             </div>

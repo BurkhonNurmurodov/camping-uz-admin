@@ -25,7 +25,11 @@ $A = 'assets';
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <script type="module" src="<?= $A ?>/js/layout-setup.js"></script>
-    <link rel="shortcut icon" href="<?= $A ?>/images/favicon.png">
+    <?php if ($favicon = setting('favicon')): ?>
+        <link rel="shortcut icon" href="<?= e(upload_url($favicon)) ?>">
+    <?php else: ?>
+        <link rel="shortcut icon" href="<?= $A ?>/images/favicon.png">
+    <?php endif; ?>
     <link href="<?= $A ?>/css/bootstrap.min.css" id="bootstrap-style" rel="stylesheet">
     <link href="<?= $A ?>/css/icons.css" rel="stylesheet">
     <link href="<?= $A ?>/css/app.min.css" id="app-style" rel="stylesheet">

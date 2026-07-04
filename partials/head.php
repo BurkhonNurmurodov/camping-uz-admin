@@ -33,7 +33,11 @@ $nav_inbox_total = $nav_new_regs + $nav_new_privates + $nav_unread_msgs;
     <!-- layout setup (theme / sidebar / dark-mode) -->
     <script type="module" src="<?= $A ?>/js/layout-setup.js"></script>
 
-    <link rel="shortcut icon" href="<?= $A ?>/images/favicon.png">
+    <?php if ($favicon = setting('favicon')): ?>
+        <link rel="shortcut icon" href="<?= e(upload_url($favicon)) ?>">
+    <?php else: ?>
+        <link rel="shortcut icon" href="<?= $A ?>/images/favicon.png">
+    <?php endif; ?>
 
     <!-- vendor css -->
     <link rel="stylesheet" href="<?= $A ?>/libs/simplebar/simplebar.min.css">
