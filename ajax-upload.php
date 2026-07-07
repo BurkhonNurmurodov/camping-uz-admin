@@ -9,29 +9,36 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$type = $_POST['type'] ?? 'image';
-$file = $_FILES['file'] ?? null;
+try {
+    $type = $_POST['type'] ?? 'image';
+    $file = $_FILES['file'] ?? null;
 
-if (!$file) {
-    echo json_encode(['success' => false, 'error' => 'No file uploaded.']);
-    exit;
-}
+    if (!$file) {
+        echo json_encode(['success' => false, 'error' => 'No file uploaded.']);
+        exit;
+    }
 
-if ($type === 'video') {
-    [$ok, $res] = save_video($file, 'async', 60);
-} else {
-    [$ok, $res] = save_image($file, 'async', 10);
-}
+    if ($type === 'video') {
+        [$ok, $res] = save_video($file, 'async', 60);
+    } else {
+        [$ok, $res] = save_image($file, 'async', 10);
+    }
 
-if ($ok) {
-    echo json_encode([
-        'success' => true,
-        'path' => $res,
-        'url' => upload_url($res)
-    ]);
-} else {
+    if ($ok) {
+        echo json_encode([
+            'success' => true,
+            'path' => $res,
+            'url' => upload_url($res)
+        ]);
+    } else {
+        echo json_encode([
+            'success' => false,
+            'error' => $res
+        ]);
+    }
+} catch (\Throwable $e) {
     echo json_encode([
         'success' => false,
-        'error' => $res
+        'error' => 'Exception: ' . $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine()
     ]);
 }
