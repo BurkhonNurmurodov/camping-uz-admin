@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (isImage || isVideo) {
                 const xhr = new XMLHttpRequest();
-                xhr.open('POST', 'ajax-upload.php', true);
+                xhr.open('POST', '/ajax-upload.php', true);
                 
                 xhr.upload.onprogress = (e) => {
                     if (e.lengthComputable) {

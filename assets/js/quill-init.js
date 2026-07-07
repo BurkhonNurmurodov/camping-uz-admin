@@ -106,7 +106,7 @@
                 var fd = new FormData();
                 fd.append('file', file);
                 fd.append('_csrf', CSRF);
-                fetch('upload-media.php', { method: 'POST', body: fd })
+                fetch('/upload-media.php', { method: 'POST', body: fd })
                     .then(function (r) { return r.json(); })
                     .then(function (data) {
                         if (data.url) {
