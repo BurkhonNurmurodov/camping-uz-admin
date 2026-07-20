@@ -42,19 +42,9 @@ $A = 'assets';
                 <?php
                 $logoImage = setting('logo_image');
                 $logoLight = setting('logo_image_light');
-                if ($logoImage || $logoLight): ?>
-                    <?php if ($logoImage): ?>
-                        <img src="<?= e(upload_url($logoImage)) ?>" alt="Logo" class="logo-dark" style="max-height: 48px; max-width: 100%; object-fit: contain;">
-                    <?php endif; ?>
-                    <?php if ($logoLight): ?>
-                        <img src="<?= e(upload_url($logoLight)) ?>" alt="Logo" class="logo-light" style="max-height: 48px; max-width: 100%; object-fit: contain;">
-                    <?php endif; ?>
-                    <?php if (!$logoLight && $logoImage): ?>
-                        <img src="<?= e(upload_url($logoImage)) ?>" alt="Logo" class="logo-light" style="max-height: 48px; max-width: 100%; object-fit: contain;">
-                    <?php endif; ?>
-                    <?php if (!$logoImage && $logoLight): ?>
-                        <img src="<?= e(upload_url($logoLight)) ?>" alt="Logo" class="logo-dark" style="max-height: 48px; max-width: 100%; object-fit: contain;">
-                    <?php endif; ?>
+                $loginLogo = $logoImage ?: $logoLight;
+                if ($loginLogo): ?>
+                    <img src="<?= e(upload_url($loginLogo)) ?>" alt="Logo" style="max-height: 48px; max-width: 100%; object-fit: contain;">
                 <?php else: ?>
                     <span class="d-inline-flex align-items-center justify-content-center bg-primary text-white rounded fw-bold fs-20"
                           style="width:48px;height:48px;">SN</span>
