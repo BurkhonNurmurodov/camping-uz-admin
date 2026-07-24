@@ -1,0 +1,41 @@
+<?php return array(
+    'root' => array(
+        'name' => '__root__',
+        'pretty_version' => 'dev-main',
+        'version' => 'dev-main',
+        'reference' => '566a26b3638b30c75a278ec7e6b3c9589f13ac63',
+        'type' => 'library',
+        'install_path' => __DIR__ . '/../../',
+        'aliases' => array(),
+        'dev' => true,
+    ),
+    'versions' => array(
+        '__root__' => array(
+            'pretty_version' => 'dev-main',
+            'version' => 'dev-main',
+            'reference' => '566a26b3638b30c75a278ec7e6b3c9589f13ac63',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../../',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'php-imap/php-imap' => array(
+            'pretty_version' => '6.0.0',
+            'version' => '6.0.0.0',
+            'reference' => 'f16c7a4e7a0288723d74acf97034265360362e29',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../php-imap/php-imap',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'phpmailer/phpmailer' => array(
+            'pretty_version' => 'v7.1.1',
+            'version' => '7.1.1.0',
+            'reference' => '1bc1716a507a65e039d4ac9d9adebbbd0d346e15',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../phpmailer/phpmailer',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+    ),
+);

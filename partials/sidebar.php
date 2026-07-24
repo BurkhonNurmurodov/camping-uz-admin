@@ -97,11 +97,17 @@ $logoLight = setting('logo_image_light');
                 </li>
                 <li class="pe-slide">
                     <a href="<?= BASE_PATH ?>/messages" class="pe-nav-link<?= $is('messages') ?>">
-                        <i class="ri-mail-line pe-nav-icon"></i>
-                        <span class="pe-nav-content">Messages</span>
+                        <i class="ri-message-3-line pe-nav-icon"></i>
+                        <span class="pe-nav-content">Site Messages</span>
                         <?php if (!empty($nav_unread_msgs)): ?>
                             <span class="badge bg-danger rounded-pill ms-auto"><?= (int) $nav_unread_msgs ?></span>
                         <?php endif; ?>
+                    </a>
+                </li>
+                <li class="pe-slide">
+                    <a href="<?= BASE_PATH ?>/email" class="pe-nav-link<?= $is('email') ?>">
+                        <i class="ri-mail-send-line pe-nav-icon"></i>
+                        <span class="pe-nav-content">Webmail</span>
                     </a>
                 </li>
 
