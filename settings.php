@@ -68,8 +68,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'agency_name_en', 'agency_name_ru', 'moto_en', 'moto_ru',
             'social_instagram', 'social_telegram', 'social_facebook', 'social_whatsapp',
             'telegram_bot_token', 'telegram_chat_id', 'google_maps_api_key',
+            'mail_imap_host', 'mail_username', 'mail_smtp_host', 'mail_smtp_port',
         ] as $k) {
             set_setting($k, trim((string) input($k, '')));
+        }
+        $mailPassword = (string) input('mail_password', '');
+        if ($mailPassword !== '') {
+            set_setting('mail_password', $mailPassword);
         }
         $dl = input('default_lang');
         set_setting('default_lang', in_array($dl, supported_langs(), true) ? $dl : DEFAULT_LANG);
@@ -344,6 +349,33 @@ $heroVideo = setting('hero_video');
                         <label class="form-label">Google Maps API Key</label>
                         <input type="text" name="google_maps_api_key" class="form-control" value="<?= e(setting('google_maps_api_key', '')) ?>">
                         <div class="form-text">Used for the tour route picker and public map.</div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <h6 class="mb-3">Webmail settings</h6>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">IMAP host</label>
+                            <input type="text" name="mail_imap_host" class="form-control" value="<?= e(setting('mail_imap_host', 'mail.silknaviora.uz')) ?>" placeholder="mail.example.com">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">SMTP host</label>
+                            <input type="text" name="mail_smtp_host" class="form-control" value="<?= e(setting('mail_smtp_host', 'mail.silknaviora.uz')) ?>" placeholder="mail.example.com">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Mail username</label>
+                            <input type="email" name="mail_username" class="form-control" value="<?= e(setting('mail_username', 'info@silknaviora.uz')) ?>" placeholder="info@example.com">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">SMTP port</label>
+                            <input type="number" name="mail_smtp_port" class="form-control" value="<?= e(setting('mail_smtp_port', '465')) ?>" min="1" max="65535">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Mail password</label>
+                            <input type="password" name="mail_password" class="form-control" value="" placeholder="Enter to change the stored password">
+                            <div class="form-text">Leave this saved only on the admin server. Use the same mailbox for inbox and sending.</div>
+                        </div>
                     </div>
                 </div>
             </div>

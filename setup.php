@@ -68,6 +68,11 @@ $defaults = [
     'social_telegram'    => '',
     'social_facebook'    => '',
     'social_whatsapp'    => '',
+    'mail_imap_host'     => 'mail.silknaviora.uz',
+    'mail_username'      => 'info@silknaviora.uz',
+    'mail_password'      => '',
+    'mail_smtp_host'     => 'mail.silknaviora.uz',
+    'mail_smtp_port'     => '465',
 ];
 $added = 0;
 foreach ($defaults as $k => $v) {

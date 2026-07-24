@@ -17,12 +17,12 @@ class MailClient {
     private $smtpPort;
 
     public function __construct() {
-        // NOTE: These should be moved to settings.php or .env ideally
-        $this->imapPath = '{' . (getenv('IMAP_HOST') ?: 'mail.silknaviora.uz') . ':993/imap/ssl}INBOX';
-        $this->login = getenv('MAIL_USER') ?: 'info@silknaviora.uz';
-        $this->password = getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE';
-        $this->smtpHost = getenv('SMTP_HOST') ?: 'mail.silknaviora.uz';
-        $this->smtpPort = getenv('SMTP_PORT') ?: 465;
+        $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.uz');
+        $this->imapPath = '{' . $imapHost . ':993/imap/ssl}INBOX';
+        $this->login = (string) setting('mail_username', getenv('MAIL_USER') ?: 'info@silknaviora.uz');
+        $this->password = (string) setting('mail_password', getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE');
+        $this->smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.uz');
+        $this->smtpPort = (int) setting('mail_smtp_port', getenv('SMTP_PORT') ?: 465);
 
         // Try to connect to IMAP
         try {
