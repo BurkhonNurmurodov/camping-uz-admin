@@ -1,6 +1,6 @@
 {
     "require": {
-        "php-imap/php-imap": "^6.0",
+        "php-imap/php-imap": "^5.1",
         "phpmailer/phpmailer": "^7.1"
     }
 }

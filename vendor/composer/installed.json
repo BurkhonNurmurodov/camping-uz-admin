@@ -2,17 +2,17 @@
     "packages": [
         {
             "name": "php-imap/php-imap",
-            "version": "6.0.0",
-            "version_normalized": "6.0.0.0",
+            "version": "5.1.0",
+            "version_normalized": "5.1.0.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/barbushin/php-imap.git",
-                "reference": "f16c7a4e7a0288723d74acf97034265360362e29"
+                "reference": "bea16a9673c41ff6ebccca4afae0624933941d0d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/barbushin/php-imap/zipball/f16c7a4e7a0288723d74acf97034265360362e29",
-                "reference": "f16c7a4e7a0288723d74acf97034265360362e29",
+                "url": "https://api.github.com/repos/barbushin/php-imap/zipball/bea16a9673c41ff6ebccca4afae0624933941d0d",
+                "reference": "bea16a9673c41ff6ebccca4afae0624933941d0d",
                 "shasum": ""
             },
             "require": {
@@ -21,7 +21,7 @@
                 "ext-imap": "*",
                 "ext-json": "*",
                 "ext-mbstring": "*",
-                "php": "^8.2"
+                "php": "^7.4 || ^8.0"
             },
             "require-dev": {
                 "friendsofphp/php-cs-fixer": "^3.4",
@@ -38,7 +38,7 @@
             "suggest": {
                 "ext-fileinfo": "To facilitate IncomingMailAttachment::getFileInfo() auto-detection"
             },
-            "time": "2026-05-10T18:53:08+00:00",
+            "time": "2026-05-10T10:21:16+00:00",
             "type": "library",
             "installation-source": "source",
             "autoload": {
@@ -69,7 +69,7 @@
             ],
             "support": {
                 "issues": "https://github.com/barbushin/php-imap/issues",
-                "source": "https://github.com/barbushin/php-imap/tree/6.0.0"
+                "source": "https://github.com/barbushin/php-imap/tree/5.1.0"
             },
             "install-path": "../php-imap/php-imap"
         },
