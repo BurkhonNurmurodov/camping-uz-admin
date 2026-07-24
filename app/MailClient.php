@@ -36,14 +36,23 @@ class MailClient {
                 false // Ignore self-signed certs (set to true if needed)
             );
             $this->mailbox->setConnectionArgs(CL_EXPUNGE);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Ignore for now, handled on fetch
         }
     }
 
+    private function requireMailbox(): Mailbox {
+        if (!$this->mailbox instanceof Mailbox) {
+            throw new \RuntimeException('IMAP mailbox is unavailable. Check the mail server settings and credentials.');
+        }
+
+        return $this->mailbox;
+    }
+
     public function getInbox($page = 1, $perPage = 20) {
         try {
-            $mailsIds = $this->mailbox->searchMailbox('ALL');
+            $mailbox = $this->requireMailbox();
+            $mailsIds = $mailbox->searchMailbox('ALL');
             if(!$mailsIds) {
                 return [];
             }
@@ -53,7 +62,7 @@ class MailClient {
             $emails = [];
 
             foreach ($pagedIds as $id) {
-                $mail = $this->mailbox->getMail($id, false);
+                $mail = $mailbox->getMail($id, false);
                 $emails[] = [
                     'id' => $id,
                     'subject' => $mail->subject,
@@ -65,16 +74,17 @@ class MailClient {
                 ];
             }
             return $emails;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             error_log("IMAP Error: " . $e->getMessage());
-            return [];
+            throw new \RuntimeException($e->getMessage(), 0, $e);
         }
     }
 
     public function getMessage($id) {
         try {
-            $mail = $this->mailbox->getMail($id);
-            $this->mailbox->markMailAsRead($id);
+            $mailbox = $this->requireMailbox();
+            $mail = $mailbox->getMail($id);
+            $mailbox->markMailAsRead($id);
             return [
                 'id' => $id,
                 'subject' => $mail->subject,
@@ -84,18 +94,20 @@ class MailClient {
                 'body' => $mail->textHtml ?: nl2br($mail->textPlain),
                 'attachments' => $mail->getAttachments()
             ];
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             error_log("IMAP Error: " . $e->getMessage());
-            return null;
+            throw new \RuntimeException($e->getMessage(), 0, $e);
         }
     }
 
     public function deleteMessage($id) {
         try {
-            $this->mailbox->deleteMail($id);
+            $mailbox = $this->requireMailbox();
+            $mailbox->deleteMail($id);
             return true;
-        } catch (\Exception $e) {
-            return false;
+        } catch (\Throwable $e) {
+            error_log("IMAP Error: " . $e->getMessage());
+            throw new \RuntimeException($e->getMessage(), 0, $e);
         }
     }
 
