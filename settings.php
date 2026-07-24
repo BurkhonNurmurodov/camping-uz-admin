@@ -373,8 +373,8 @@ $heroVideo = setting('hero_video');
                         </div>
                         <div class="col-12">
                             <label class="form-label">Mail password</label>
-                            <input type="password" name="mail_password" class="form-control" value="" placeholder="Enter to change the stored password">
-                            <div class="form-text">Leave this saved only on the admin server. Use the same mailbox for inbox and sending.</div>
+                            <input type="password" name="mail_password" class="form-control" value="<?= e(setting('mail_password', '')) ?>" placeholder="Enter to change the stored password" autocomplete="new-password">
+                            <div class="form-text">Use the same mailbox for inbox and sending. The value stays saved after you press Save.</div>
                         </div>
                     </div>
                 </div>
