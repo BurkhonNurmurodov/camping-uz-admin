@@ -12,6 +12,10 @@ if (is_file(__DIR__ . $path)) {
 }
 
 // Emulate .htaccess rewrites
+if (preg_match('#^/email/?$#', $path)) {
+    require __DIR__ . '/email.php';
+    return true;
+}
 if (preg_match('#^/tour-edit/([0-9]+)$#', $path, $matches)) {
     $_GET['id'] = $matches[1];
     require __DIR__ . '/tour-edit.php';
