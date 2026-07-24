@@ -15,6 +15,7 @@ class MailClient {
     private $password;
     private $smtpHost;
     private $smtpPort;
+    private ?string $connectionError = null;
 
     public function __construct() {
         $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.uz');
@@ -37,13 +38,17 @@ class MailClient {
             );
             $this->mailbox->setConnectionArgs(CL_EXPUNGE);
         } catch (\Throwable $e) {
-            // Ignore for now, handled on fetch
+            $this->connectionError = $e->getMessage();
         }
     }
 
     private function requireMailbox(): Mailbox {
         if (!$this->mailbox instanceof Mailbox) {
-            throw new \RuntimeException('IMAP mailbox is unavailable. Check the mail server settings and credentials.');
+            $message = 'IMAP mailbox is unavailable. Check the mail server settings and credentials.';
+            if ($this->connectionError) {
+                $message .= ' Details: ' . $this->connectionError;
+            }
+            throw new \RuntimeException($message);
         }
 
         return $this->mailbox;
@@ -60,7 +65,6 @@ class MailClient {
 
             $pagedIds = array_slice($mailsIds, ($page - 1) * $perPage, $perPage);
             $emails = [];
-
             foreach ($pagedIds as $id) {
                 $mail = $mailbox->getMail($id, false);
                 $emails[] = [
