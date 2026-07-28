@@ -252,16 +252,30 @@ timed('Public IP of this server', function () use ($smtpHost, &$publicIp) {
 });
 
 if ($publicIp !== '' && $SHELL_OK) {
-    timed('Reverse DNS (PTR) for ' . $publicIp, function () use ($publicIp, $smtpHost) {
-        $ptr = trim((string) sh('dig +short +time=3 +tries=1 -x ' . escapeshellarg($publicIp), 8));
+    timed('Reverse DNS (PTR) for ' . $publicIp, function () use ($publicIp) {
+        // Query a PUBLIC resolver, not the system one. This box answers "traveluz.local"
+        // from its own /etc/hosts or local resolver, which no receiving mail server can
+        // see — reporting that as OK would hide a real delivery blocker.
+        $ptr = trim((string) sh('dig +short +time=3 +tries=1 -x ' . escapeshellarg($publicIp) . ' @1.1.1.1', 8));
+        $ptr = trim(explode("\n", $ptr)[0] ?? '');
+
         if ($ptr === '') {
-            $ptr = trim((string) sh('host -W 3 ' . escapeshellarg($publicIp), 8));
-            if (stripos($ptr, 'not found') !== false || stripos($ptr, 'NXDOMAIN') !== false) { $ptr = ''; }
+            return '!! PROBLEM — NO PUBLIC PTR RECORD. Gmail/Outlook reject mail from IPs '
+                 . 'without one (550-5.7.25). Ask the hosting provider to set the PTR for '
+                 . $publicIp . ' to mail.silknaviora.com';
         }
-        return $ptr !== ''
-            ? 'OK — ' . $ptr
-            : '!! PROBLEM — NO PTR RECORD. Gmail/Outlook reject mail from IPs without one (550-5.7.25). '
-              . 'Ask the hosting provider to set the PTR for ' . $publicIp . ' to ' . $smtpHost;
+        $name = rtrim($ptr, '.');
+        // .local/.localdomain/.internal and bare labels are not routable names; a public
+        // MX treats them the same as no PTR at all.
+        if (strpos($name, '.') === false || preg_match('/\.(local|localdomain|internal|lan)$/i', $name)) {
+            return '!! PROBLEM — PTR is "' . $name . '", which is not a public hostname. '
+                 . 'Receiving servers treat this as no PTR. Set it to mail.silknaviora.com';
+        }
+        // Forward-confirmed reverse DNS: the PTR name must resolve back to this IP.
+        $fwd = trim((string) sh('dig +short +time=3 +tries=1 A ' . escapeshellarg($name) . ' @1.1.1.1', 8));
+        $fwdOk = in_array($publicIp, array_filter(array_map('trim', explode("\n", $fwd))), true);
+        return ($fwdOk ? 'OK — ' : '!! PROBLEM — not forward-confirmed: ')
+             . $name . ' (forward: ' . (trim($fwd) === '' ? 'none' : str_replace("\n", ' ', trim($fwd))) . ')';
     });
 
     $domain = substr(strrchr($login, '@') ?: '@', 1) ?: 'silknaviora.com';
