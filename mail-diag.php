@@ -48,11 +48,18 @@ $HAS_TIMEOUT = false;
 if ($SHELL_OK) {
     $HAS_TIMEOUT = trim((string) @shell_exec('command -v timeout 2>/dev/null')) !== '';
 }
-/** Run a shell command under a hard wall-clock cap. Returns null when shell_exec is unavailable. */
+/**
+ * Run a shell command under a hard wall-clock cap.
+ * The command is wrapped in `sh -c` so 2>&1 covers the whole pipeline — appending it
+ * to the outside would only capture stderr of the LAST stage and silently lose the
+ * error from the command that actually matters (e.g. `mailq | tail`).
+ */
 function sh(string $cmd, int $seconds = 10): ?string {
     global $SHELL_OK, $HAS_TIMEOUT;
     if (!$SHELL_OK) { return null; }
-    $full = ($HAS_TIMEOUT ? 'timeout ' . $seconds . ' ' : '') . $cmd . ' 2>&1';
+    // The brace group matters: `cmd | tail 2>&1` binds the redirect to `tail`, so the
+    // error from the command you actually care about is lost. `{ ...; } 2>&1` catches it.
+    $full = ($HAS_TIMEOUT ? 'timeout ' . $seconds . ' ' : '') . 'sh -c ' . escapeshellarg('{ ' . $cmd . ' ; } 2>&1');
     return @shell_exec($full);
 }
 
@@ -98,24 +105,59 @@ if (!$SHELL_OK) {
     out("  journalctl -u postfix -n 100 --no-pager\n");
 } else {
     timed('postfix installed', function () {
+        // NOTE: postconf -d prints *built-in defaults* — it succeeds even when Postfix
+        // is stopped or misconfigured, so it only proves the package is present.
         $v = trim((string) sh('postconf -d mail_version', 8));
         return $v !== '' ? $v : 'not found in PATH';
     });
-    out("\n$ mailq | tail -30\n");
-    $q = sh('mailq | tail -30', 10);
-    out((trim((string) $q) === '' ? "(no output — queue empty, or mailq unavailable)\n" : $q) . "\n");
+    timed('postfix service state', function () {
+        $s = trim((string) sh('systemctl is-active postfix; systemctl is-enabled postfix', 8));
+        return $s !== '' ? str_replace("\n", ' / ', $s) : '(systemctl unavailable)';
+    });
 
+    out("\n\$ ss -ltnp | grep -E ':(25|465|587|993|143)\\b'   <-- who is actually listening\n");
+    $listen = sh("ss -ltnp | grep -E ':(25|465|587|993|143)\\b'", 8);
+    if (trim((string) $listen) === '') {
+        $listen = sh("netstat -ltnp | grep -E ':(25|465|587|993|143)\\b'", 8);
+    }
+    out((trim((string) $listen) === '' ? "(nothing returned — ss/netstat unavailable to this user)\n" : $listen) . "\n");
+
+    out("\$ postconf -n | grep -E 'inet_interfaces|inet_protocols|myhostname|mydestination|relayhost|mynetworks'\n");
+    out((string) sh("postconf -n | grep -E 'inet_interfaces|inet_protocols|myhostname|mydestination|relayhost|mynetworks'", 8) . "\n");
+
+    out("\$ postqueue -p | tail -20\n");
+    $q = sh('postqueue -p | tail -20', 10);
+    out((trim((string) $q) === '' ? "(no output at all — postqueue could not run; see the error above if any)\n" : $q) . "\n");
+
+    // `mailq`/`postqueue -p` do NOT show the maildrop queue. Mail submitted through
+    // /usr/sbin/sendmail lands there first and stays invisible if the pickup daemon
+    // is not running — exactly the "accepted, never delivered" case.
+    out("Queue directory contents (maildrop = submitted via sendmail, not yet picked up):\n");
+    foreach (['maildrop', 'incoming', 'active', 'deferred', 'corrupt'] as $qdir) {
+        $path = '/var/spool/postfix/' . $qdir;
+        timed('  ' . str_pad($qdir, 10), function () use ($path) {
+            if (!is_dir($path)) { return 'directory not present'; }
+            $n = trim((string) sh('find ' . escapeshellarg($path) . ' -type f | wc -l', 8));
+            return ($n === '' ? '?' : $n) . ' file(s)' . (is_readable($path) ? '' : ' (not readable by this user)');
+        });
+    }
+
+    out("\n");
     $logFile = null;
     foreach (['/var/log/mail.log', '/var/log/maillog', '/var/log/mail.err'] as $candidate) {
         if (is_readable($candidate)) { $logFile = $candidate; break; }
+        if (file_exists($candidate)) {
+            out("!! $candidate EXISTS but is not readable by " . (function_exists('posix_getpwuid') ? (posix_getpwuid(posix_geteuid())['name'] ?? '?') : 'the web user') . "\n");
+            out("   Fix with:  sudo usermod -aG adm www-data && sudo systemctl reload apache2\n");
+        }
     }
     if ($logFile) {
         out("\$ grep 'status=' $logFile | tail -25\n");
         out((string) sh('grep "status=" ' . escapeshellarg($logFile) . ' | tail -25', 10) . "\n");
     } else {
-        out("No readable mail log (tried /var/log/mail.log, /var/log/maillog, /var/log/mail.err).\n");
-        $j = sh('journalctl -u postfix -n 40 --no-pager', 10);
-        out(trim((string) $j) === '' ? "journalctl gave nothing either — check the log path with your host.\n" : $j . "\n");
+        out("No readable mail log. Run this over SSH — it names the exact failure reason:\n");
+        out("  sudo grep 'status=' /var/log/mail.log | tail -30\n");
+        out("  sudo journalctl -u postfix -n 100 --no-pager\n");
     }
 }
 
@@ -123,7 +165,10 @@ if (!$SHELL_OK) {
 out("\n--- Local SMTP transports (what the webmail sends through) ---\n");
 // Mirrors MailClient::buildSendStrategies(). A transport that connects but returns
 // no banner is exactly what used to stall the compose spinner for minutes.
-function smtp_probe(string $host, int $port, int $timeout = 4): array {
+// 8s, not 4: Postfix's postscreen deliberately withholds the banner for
+// postscreen_greet_wait (6s by default) from clients it has not yet vouched for, so a
+// shorter cap would report a healthy server as broken.
+function smtp_probe(string $host, int $port, int $timeout = 8): array {
     $scheme = ($port === 465 ? 'ssl://' : 'tcp://');
     $ctx = stream_context_create(['ssl' => [
         'verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true,
@@ -185,11 +230,25 @@ foreach (['gmail-smtp-in.l.google.com', 'alt1.gmail-smtp-in.l.google.com'] as $m
 out("\n--- Sender reputation records ---\n");
 // gethostbyaddr()/dns_get_record() have no timeout knob and can block indefinitely
 // on a slow resolver, so prefer `dig` under a hard cap and only fall back if asked.
+// The SMTP host may be set to 127.0.0.1, which says nothing about the address the
+// world sees us on — so fall back to the interface Apache is bound to, then to the
+// public MX hostname. gethostbyname() returns its argument unchanged for IP literals.
 $publicIp = '';
-timed('Public IP of ' . $smtpHost, function () use ($smtpHost, &$publicIp) {
-    $ip = gethostbyname($smtpHost);
-    $publicIp = ($ip !== $smtpHost) ? $ip : '';
-    return $publicIp !== '' ? $publicIp : '!! could not resolve';
+timed('Public IP of this server', function () use ($smtpHost, &$publicIp) {
+    $candidates = [];
+    if (filter_var($smtpHost, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+        $candidates[] = $smtpHost;
+    }
+    $serverAddr = $_SERVER['SERVER_ADDR'] ?? '';
+    if (filter_var($serverAddr, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+        $candidates[] = $serverAddr;
+    }
+    foreach (['mail.silknaviora.com', 'silknaviora.com'] as $name) {
+        $ip = @gethostbyname($name);
+        if ($ip !== $name && filter_var($ip, FILTER_VALIDATE_IP)) { $candidates[] = $ip; }
+    }
+    $publicIp = $candidates[0] ?? '';
+    return $publicIp !== '' ? $publicIp . ' (candidates: ' . implode(', ', array_unique($candidates)) . ')' : '!! could not determine';
 });
 
 if ($publicIp !== '' && $SHELL_OK) {
@@ -205,7 +264,7 @@ if ($publicIp !== '' && $SHELL_OK) {
               . 'Ask the hosting provider to set the PTR for ' . $publicIp . ' to ' . $smtpHost;
     });
 
-    $domain = substr(strrchr($login, '@') ?: '@', 1);
+    $domain = substr(strrchr($login, '@') ?: '@', 1) ?: 'silknaviora.com';
     foreach ([
         'SPF'   => $domain,
         'DMARC' => '_dmarc.' . $domain,
@@ -226,6 +285,8 @@ if ($publicIp !== '' && $SHELL_OK) {
 // Slowest checks last: from the server, the public mail hostname resolves back to
 // the server's own IP, and if the network does not hairpin these will crawl.
 out("\n--- IMAP reachability (slow — runs last on purpose) ---\n");
+out("(If the report stops inside this section, everything above it is complete.\n");
+out(" ext-imap's c-client can ignore imap_timeout against a loopback 993 listener.)\n");
 timed("TCP $imapHost:$imapPort", function () use ($imapHost, $imapPort) {
     $errno = 0; $errstr = '';
     $t = @fsockopen('tcp://' . $imapHost, $imapPort, $errno, $errstr, 6);

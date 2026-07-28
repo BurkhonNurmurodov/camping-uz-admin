@@ -570,13 +570,10 @@ class MailClient {
         $addLocal(587, true);
         $addLocal(25, false);
 
-        // 2. The sendmail binary — no network at all, hands straight to the local queue.
-        $strategies[] = [
-            'name' => 'Sendmail (/usr/sbin/sendmail)',
-            'type' => 'sendmail',
-        ];
-
-        // 3. Last resort: the configured public SMTP host.
+        // 2. The configured public SMTP host. On this server that is the same Postfix
+        //    reached over the public interface — which matters, because Postfix can be
+        //    bound to the public address and not to loopback, making every strategy
+        //    above fail while this one works.
         if (!in_array(strtolower(trim($this->smtpHost)), ['127.0.0.1', 'localhost', '::1', ''], true)) {
             $strategies[] = [
                 'name'    => "SMTP ({$this->smtpHost}:{$this->smtpPort})",
@@ -588,6 +585,15 @@ class MailClient {
                 'autotls' => true,
             ];
         }
+
+        // 3. Sendmail LAST. It hands the message to the local queue and reports success
+        //    as soon as the binary exits 0 — it cannot fail in a way we can detect, so
+        //    placing it earlier would shadow every real SMTP transport behind it and
+        //    turn an undeliverable message into a "sent successfully".
+        $strategies[] = [
+            'name' => 'Sendmail (/usr/sbin/sendmail)',
+            'type' => 'sendmail',
+        ];
 
         return $strategies;
     }
