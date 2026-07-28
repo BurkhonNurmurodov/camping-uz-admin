@@ -59,8 +59,9 @@ class MailClient {
             }
             $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
             if (!is_dir($attachmentsDir)) {
-                @mkdir($attachmentsDir, 0775, true);
+                @mkdir($attachmentsDir, 0777, true);
             }
+            @chmod($attachmentsDir, 0777);
             $this->mailbox = new Mailbox(
                 $this->imapPath,
                 $this->login,
@@ -120,6 +121,39 @@ class MailClient {
             $mailbox = $this->requireMailbox();
             $mail = $mailbox->getMail($id);
             $mailbox->markMailAsRead($id);
+
+            $formattedAttachments = [];
+            $rawAttachments = $mail->getAttachments();
+            if (is_array($rawAttachments)) {
+                foreach ($rawAttachments as $att) {
+                    $filePath = $att->filePath ?: '';
+                    $fileName = $att->name ?: ('attachment_' . ($att->id ?: uniqid()));
+                    
+                    // Generate a publicly accessible web URL for the attachment
+                    $url = '';
+                    if (!empty($filePath) && file_exists($filePath)) {
+                        if (($pos = strpos($filePath, 'assets/mail_attachments/')) !== false) {
+                            $url = substr($filePath, $pos);
+                        } else {
+                            $url = 'assets/mail_attachments/' . basename($filePath);
+                        }
+                    } else {
+                        $standardPath = __DIR__ . '/../assets/mail_attachments/' . $fileName;
+                        if (file_exists($standardPath)) {
+                            $url = 'assets/mail_attachments/' . $fileName;
+                        }
+                    }
+                    
+                    $formattedAttachments[] = [
+                        'id' => $att->id ?? '',
+                        'name' => $fileName,
+                        'size' => $att->sizeInBytes ?? ( (!empty($filePath) && file_exists($filePath)) ? filesize($filePath) : 0 ),
+                        'url' => $url,
+                        'mime' => $att->mimeType ?? ($att->mime ?? 'application/octet-stream')
+                    ];
+                }
+            }
+
             return [
                 'id' => $id,
                 'subject' => $mail->subject,
@@ -127,7 +161,7 @@ class MailClient {
                 'fromAddress' => $mail->fromAddress,
                 'date' => date('F j, Y | g:i A', strtotime($mail->date)),
                 'body' => $mail->textHtml ?: nl2br($mail->textPlain),
-                'attachments' => $mail->getAttachments()
+                'attachments' => $formattedAttachments
             ];
         } catch (\Throwable $e) {
             error_log("IMAP Error: " . $e->getMessage());

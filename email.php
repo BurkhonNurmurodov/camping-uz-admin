@@ -196,6 +196,14 @@ require __DIR__ . '/partials/head.php';
                     <!-- Body rendered here -->
                 </div>
                 
+                <!-- Attachments Section -->
+                <div id="detailAttachmentsContainer" class="d-none pt-3 mt-3 border-top">
+                    <h6 class="fs-14 fw-semibold text-dark mb-3"><i class="ri-attachment-line me-2 text-primary"></i>Attachments (<span id="attachmentsCount">0</span>)</h6>
+                    <div class="d-flex flex-wrap gap-2" id="detailAttachments">
+                        <!-- Rendered via JS -->
+                    </div>
+                </div>
+                
                 <!-- Footer Reply Section -->
                 <div class="quick-reply mt-5 pt-4 border-top d-flex align-items-center justify-content-between bg-light-subtle p-3 rounded-2">
                     <span class="text-muted fs-14">Click to reply to this message or discard it from your mailbox.</span>
@@ -351,6 +359,9 @@ function readEmail(id) {
     document.getElementById('emailDetailsView').classList.add('d-flex');
     
     document.getElementById('detailBody').innerHTML = '<div class="text-center my-5 py-5"><div class="spinner-border text-primary my-2" role="status"></div><div class="text-muted fs-14 mt-2">Loading message content...</div></div>';
+    if (document.getElementById('detailAttachmentsContainer')) {
+        document.getElementById('detailAttachmentsContainer').classList.add('d-none');
+    }
     
     fetch('email.php?action=message&id=' + id)
         .then(res => res.json())
@@ -372,6 +383,37 @@ function readEmail(id) {
             
             document.getElementById('detailDate').innerText = data.date;
             document.getElementById('detailBody').innerHTML = data.body;
+            
+            // Render Attachments
+            let attachmentsContainer = document.getElementById('detailAttachmentsContainer');
+            let attachmentsList = document.getElementById('detailAttachments');
+            let attachmentsCount = document.getElementById('attachmentsCount');
+            if (attachmentsContainer && attachmentsList && attachmentsCount) {
+                attachmentsList.innerHTML = '';
+                if (data.attachments && data.attachments.length > 0) {
+                    attachmentsCount.innerText = data.attachments.length;
+                    let attHtml = '';
+                    data.attachments.forEach(att => {
+                        let sizeStr = att.size ? ` (${Math.round(att.size / 1024)} KB)` : '';
+                        let downloadLink = att.url ? att.url : '#';
+                        let target = att.url ? 'target="_blank" download' : 'onclick="alert(\'Attachment file path unavailable on server.\'); return false;"';
+                        
+                        attHtml += `
+                        <a href="${downloadLink}" ${target} class="btn btn-outline-secondary d-flex align-items-center gap-2 px-3 py-2 text-decoration-none rounded-2 bg-light-subtle text-dark border shadow-sm">
+                            <i class="ri-file-download-line fs-18 text-primary"></i>
+                            <div class="text-start overflow-hidden">
+                                <div class="fw-semibold fs-13 text-truncate" style="max-width: 220px;">${att.name}</div>
+                                <div class="text-muted fs-11">Download File${sizeStr}</div>
+                            </div>
+                        </a>
+                        `;
+                    });
+                    attachmentsList.innerHTML = attHtml;
+                    attachmentsContainer.classList.remove('d-none');
+                } else {
+                    attachmentsContainer.classList.add('d-none');
+                }
+            }
             
             // Setup reply modal defaults
             document.getElementById('replyTo').value = data.fromAddress;
