@@ -22,6 +22,12 @@ class MailClient {
         $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
         $imapPort = (int) setting('mail_imap_port', getenv('IMAP_PORT') ?: 993);
         
+        // OpenSSL 3 on modern Ubuntu crashes with "SSL negotiation failed" when attempting SSL (port 993) directly against an IP address like 127.0.0.1.
+        // Automatically translate localhost IPs to the valid certificate domain hostname when port 993 is used.
+        if ($imapPort === 993 && in_array(strtolower(trim($imapHost)), ['127.0.0.1', 'localhost', '::1'], true)) {
+            $imapHost = 'mail.silknaviora.com';
+        }
+
         // Port 143 uses STARTTLS (/tls) because modern Dovecot disables plain /notls logins; port 993 uses direct SSL (/ssl)
         if ($imapPort === 143) {
             $flags = '/tls/novalidate-cert';
