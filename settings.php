@@ -34,6 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { flash('error', 'Hero video: ' . $res); }
         }
 
+        // Logos & Favicon
         if (input('remove_logo_image') == '1') {
             delete_upload(setting('logo_image')); set_setting('logo_image', '');
         } elseif ($async = input('async_logo_image')) {
@@ -64,127 +65,166 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { flash('error', 'Favicon: ' . $res); }
         }
 
+        // Identity and social links only
         foreach ([
             'agency_name_en', 'agency_name_ru', 'moto_en', 'moto_ru',
-            'social_instagram', 'social_telegram', 'social_facebook', 'social_whatsapp',
-            'telegram_bot_token', 'telegram_chat_id', 'google_maps_api_key',
-            'mail_imap_host', 'mail_imap_port', 'mail_username', 'mail_smtp_host', 'mail_smtp_port',
+            'social_instagram', 'social_telegram', 'social_facebook', 'social_whatsapp'
         ] as $k) {
             set_setting($k, trim((string) input($k, '')));
         }
-        $mailPassword = (string) input('mail_password', '');
-        if ($mailPassword !== '') {
-            set_setting('mail_password', $mailPassword);
-        }
+
         $dl = input('default_lang');
         set_setting('default_lang', in_array($dl, supported_langs(), true) ? $dl : DEFAULT_LANG);
 
-        flash('success', 'Settings saved.');
-        redirect('settings');
-    }
-
-    if ($action === 'credentials') {
-        $cur = (string) input('current_password', '');
-        $newUser = trim((string) input('new_username', ''));
-        $newPass = (string) input('new_password', '');
-        $confirm = (string) input('confirm_password', '');
-
-        $row = db_one('SELECT password_hash FROM admins WHERE id = ?', [$me['id']]);
-        if (!$row || !password_verify($cur, $row['password_hash'])) {
-            flash('error', 'Current password is incorrect.');
-        } elseif ($newUser === '') {
-            flash('error', 'Username cannot be empty.');
-        } elseif ($newPass !== '' && $newPass !== $confirm) {
-            flash('error', 'New passwords do not match.');
-        } elseif ($newPass !== '' && strlen($newPass) < 6) {
-            flash('error', 'New password must be at least 6 characters.');
-        } else {
-            admin_update_credentials((int) $me['id'], $newUser, $newPass !== '' ? $newPass : null);
-            flash('success', 'Login updated.');
-        }
-        redirect('settings');
-    }
-
-    if ($action === 'test_telegram') {
-        $r = telegram_send('🔔 <b>Silk Naviora</b> — test notification. If you can read this, notifications are configured correctly.');
-        if ($r['ok']) {
-            flash('success', 'Test message sent — check your Telegram.');
-        } else {
-            flash('error', 'Telegram test failed: ' . $r['error']);
-        }
+        flash('success', 'General branding and site settings saved successfully.');
         redirect('settings');
     }
 }
 
-$page = ['title' => 'Settings', 'section' => 'System', 'active' => 'settings'];
+$page = ['title' => 'General Settings', 'section' => 'System', 'active' => 'settings'];
 require __DIR__ . '/partials/head.php';
 
 $heroType  = setting('hero_type', 'image');
 $heroImage = setting('hero_image');
 $heroVideo = setting('hero_video');
 ?>
+
+<style>
+    .settings-card {
+        border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 14px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+        transition: transform 0.2s, box-shadow 0.2s;
+        overflow: hidden;
+    }
+    .settings-header {
+        background: #f8fafc;
+        border-bottom: 1px solid rgba(0,0,0,0.06);
+        padding: 18px 24px;
+    }
+</style>
+
 <form method="post" enctype="multipart/form-data" action="settings">
     <?= csrf_field() ?>
     <input type="hidden" name="action" value="general">
-    <div class="row g-3">
-        <!-- Identity -->
-        <div class="col-12 col-xl-6">
-            <div class="card h-100">
-                <div class="card-header"><h5 class="card-title mb-0">Agency identity</h5></div>
-                <div class="card-body">
+    
+    <div class="row g-4">
+        <!-- Left Column: Identity & Social Profiles -->
+        <div class="col-12 col-xl-6 d-flex flex-column gap-4">
+            <!-- Agency Identity -->
+            <div class="card settings-card">
+                <div class="settings-header d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="bg-primary bg-opacity-10 text-primary rounded-circle d-flex align-items-center justify-content-center" style="width: 44px; height: 44px;">
+                            <i class="ri-store-2-line fs-22"></i>
+                        </div>
+                        <div>
+                            <h5 class="card-title mb-0 fw-bold">Agency Identity &amp; Localization</h5>
+                            <span class="text-muted fs-13">Configure brand title, slogans, and site language</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-4">
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Name (EN)</label>
-                            <input type="text" name="agency_name_en" class="form-control" value="<?= e(setting('agency_name_en', '')) ?>">
+                            <label class="form-label fw-medium fs-13">Agency Name (English)</label>
+                            <input type="text" name="agency_name_en" class="form-control" value="<?= e(setting('agency_name_en', '')) ?>" placeholder="Silk Naviora">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Name (RU)</label>
-                            <input type="text" name="agency_name_ru" class="form-control" value="<?= e(setting('agency_name_ru', '')) ?>">
+                            <label class="form-label fw-medium fs-13">Agency Name (Russian)</label>
+                            <input type="text" name="agency_name_ru" class="form-control" value="<?= e(setting('agency_name_ru', '')) ?>" placeholder="Silk Naviora RU">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Moto / tagline (EN)</label>
-                            <input type="text" name="moto_en" class="form-control" value="<?= e(setting('moto_en', '')) ?>">
+                            <label class="form-label fw-medium fs-13">Motto / Tagline (English)</label>
+                            <input type="text" name="moto_en" class="form-control" value="<?= e(setting('moto_en', '')) ?>" placeholder="Discover Authentic Adventures">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Moto / tagline (RU)</label>
-                            <input type="text" name="moto_ru" class="form-control" value="<?= e(setting('moto_ru', '')) ?>">
+                            <label class="form-label fw-medium fs-13">Motto / Tagline (Russian)</label>
+                            <input type="text" name="moto_ru" class="form-control" value="<?= e(setting('moto_ru', '')) ?>" placeholder="Откройте подлинные приключения">
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Default language</label>
-                            <select name="default_lang" class="form-select">
-                                <?php foreach (['en' => 'English', 'ru' => 'Русский'] as $c => $l): ?>
+                        <div class="col-12 pt-2 border-top mt-3">
+                            <label class="form-label fw-medium fs-13">Default Website Language</label>
+                            <select name="default_lang" class="form-select w-auto min-w-200px">
+                                <?php foreach (['en' => 'English (EN)', 'ru' => 'Русский (RU)'] as $c => $l): ?>
                                     <option value="<?= $c ?>" <?= setting('default_lang', 'en') === $c ? 'selected' : '' ?>><?= $l ?></option>
                                 <?php endforeach; ?>
                             </select>
+                            <div class="form-text fs-12">Primary display language for first-time visitors.</div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Social Links -->
+            <div class="card settings-card flex-grow-1">
+                <div class="settings-header d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="bg-info bg-opacity-10 text-info rounded-circle d-flex align-items-center justify-content-center" style="width: 44px; height: 44px;">
+                            <i class="ri-share-forward-box-line fs-22"></i>
+                        </div>
+                        <div>
+                            <h5 class="card-title mb-0 fw-bold">Social Media Links</h5>
+                            <span class="text-muted fs-13">Connect your brand across public communication channels</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-4">
+                    <div class="row g-3">
+                        <?php foreach ([
+                            'social_instagram' => ['Instagram Profile', 'ri-instagram-line', '#e1306c', 'https://instagram.com/your_handle'],
+                            'social_telegram'  => ['Telegram Channel/Bot', 'ri-telegram-line', '#0088cc', 'https://t.me/your_channel'],
+                            'social_facebook'  => ['Facebook Page', 'ri-facebook-circle-line', '#1877f2', 'https://facebook.com/your_page'],
+                            'social_whatsapp'  => ['WhatsApp Contact', 'ri-whatsapp-line', '#25d366', 'https://wa.me/998900000000'],
+                        ] as $k => [$label, $icon, $color, $placeholder]): ?>
+                            <div class="col-md-6">
+                                <label class="form-label fw-medium fs-13 d-flex align-items-center">
+                                    <i class="<?= $icon ?> me-2 fs-16" style="color: <?= $color ?>;"></i> <?= $label ?>
+                                </label>
+                                <input type="text" name="<?= $k ?>" class="form-control fs-13" placeholder="<?= $placeholder ?>" value="<?= e(setting($k, '')) ?>">
+                            </div>
+                        <?php endforeach; ?>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Hero -->
-        <div class="col-12 col-xl-6">
-            <div class="card h-100">
-                <div class="card-header"><h5 class="card-title mb-0">Hero background</h5></div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label d-block">Type</label>
-                        <div class="form-check form-check-inline">
-                            <input class="form-check-input" type="radio" name="hero_type" id="ht_img" value="image" <?= $heroType !== 'video' ? 'checked' : '' ?>>
-                            <label class="form-check-label" for="ht_img">Image</label>
+        <!-- Right Column: Branding Media (Hero Background & Site Logos) -->
+        <div class="col-12 col-xl-6 d-flex flex-column gap-4">
+            <!-- Hero Background -->
+            <div class="card settings-card">
+                <div class="settings-header d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="bg-success bg-opacity-10 text-success rounded-circle d-flex align-items-center justify-content-center" style="width: 44px; height: 44px;">
+                            <i class="ri-image-edit-line fs-22"></i>
                         </div>
-                        <div class="form-check form-check-inline">
-                            <input class="form-check-input" type="radio" name="hero_type" id="ht_vid" value="video" <?= $heroType === 'video' ? 'checked' : '' ?>>
-                            <label class="form-check-label" for="ht_vid">Video</label>
+                        <div>
+                            <h5 class="card-title mb-0 fw-bold">Hero Showcase Background</h5>
+                            <span class="text-muted fs-13">Choose either a high-resolution image or immersive looping video</span>
                         </div>
                     </div>
+                </div>
+                <div class="card-body p-4">
+                    <div class="mb-3 p-3 bg-light-subtle rounded-3 border d-flex align-items-center justify-content-between flex-wrap gap-2">
+                        <span class="fw-medium text-dark fs-13">Hero Background Type:</span>
+                        <div>
+                            <div class="form-check form-check-inline me-4">
+                                <input class="form-check-input cursor-pointer" type="radio" name="hero_type" id="ht_img" value="image" <?= $heroType !== 'video' ? 'checked' : '' ?>>
+                                <label class="form-check-label fw-medium cursor-pointer" for="ht_img"><i class="ri-image-line me-1 text-primary"></i> Static Image</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input cursor-pointer" type="radio" name="hero_type" id="ht_vid" value="video" <?= $heroType === 'video' ? 'checked' : '' ?>>
+                                <label class="form-check-label fw-medium cursor-pointer" for="ht_vid"><i class="ri-video-line me-1 text-success"></i> Looping Video</label>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="row g-3">
                         <div class="col-12">
-                            <label class="form-label">Hero image <span class="text-muted fs-12">(JPG/PNG/WebP, ≤10MB)</span></label>
+                            <label class="form-label fw-medium fs-13">Hero Cover Image <span class="text-muted fs-12">(JPG/PNG/WebP, ≤10MB)</span></label>
                             <label class="dnd-upload-wrap <?= $heroImage ? 'has-preview' : '' ?>">
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
-                                <div class="dnd-upload-subtext">JPG, PNG, WebP (≤10MB)</div>
+                                <div class="dnd-upload-subtext">Recommended resolution: 1920x1080px (≤10MB)</div>
                                 <input type="checkbox" name="remove_hero_image" id="rm_hero" value="1" class="d-none">
                                 <input type="file" name="hero_image" accept="image/*" data-remove-target="rm_hero">
                                 <div class="dnd-preview-container">
@@ -197,17 +237,20 @@ $heroVideo = setting('hero_video');
                                 </div>
                             </label>
                         </div>
+
                         <div class="col-12">
-                            <label class="form-label">Hero video <span class="text-muted fs-12">(MP4/WebM, ≤60MB)</span></label>
+                            <label class="form-label fw-medium fs-13">Hero Background Video <span class="text-muted fs-12">(MP4/WebM, ≤60MB)</span></label>
                             <label class="dnd-upload-wrap <?= $heroVideo ? 'has-preview' : '' ?>">
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
-                                <div class="dnd-upload-text">Drag and drop or press to upload</div>
-                                <div class="dnd-upload-subtext">MP4, WebM (≤60MB)</div>
+                                <div class="dnd-upload-text">Drag and drop or press to upload video</div>
+                                <div class="dnd-upload-subtext">MP4, WebM (≤60MB, optimized for fast streaming)</div>
                                 <input type="checkbox" name="remove_hero_video" id="rm_hero_vid" value="1" class="d-none">
                                 <input type="file" name="hero_video" accept="video/*" data-remove-target="rm_hero_vid">
                                 <div class="dnd-preview-container">
                                     <?php if ($heroVideo): ?>
-                                        <span class="dnd-filename fw-bold text-success"><i class="ri-check-line"></i> Video uploaded</span>
+                                        <div class="p-3 bg-success-subtle text-success border rounded-3 text-center fw-bold">
+                                            <i class="ri-check-double-line me-1 fs-18"></i> Active background video uploaded and ready
+                                        </div>
                                     <?php endif; ?>
                                 </div>
                                 <div class="dnd-loader">
@@ -218,26 +261,35 @@ $heroVideo = setting('hero_video');
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Logos -->
-        <div class="col-12 col-xl-6">
-            <div class="card h-100">
-                <div class="card-header"><h5 class="card-title mb-0">Site Logos</h5></div>
-                <div class="card-body">
-                    <div class="row gy-4">
+            <!-- Site Logos & Favicon -->
+            <div class="card settings-card flex-grow-1">
+                <div class="settings-header d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="bg-warning bg-opacity-10 text-warning rounded-circle d-flex align-items-center justify-content-center" style="width: 44px; height: 44px;">
+                            <i class="ri-vip-diamond-line fs-22"></i>
+                        </div>
+                        <div>
+                            <h5 class="card-title mb-0 fw-bold">Site Logos &amp; Favicon</h5>
+                            <span class="text-muted fs-13">Upload logo variations for navigation menus and browser tabs</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-4">
+                    <div class="row g-4">
+                        <!-- Dark / Default Logo -->
                         <div class="col-12">
-                            <label class="form-label">Logo image (Dark text / Default) <span class="text-muted fs-12">(PNG/JPG/WebP, transparent bg recommended)</span></label>
+                            <label class="form-label fw-medium fs-13">Primary Logo <span class="text-muted fs-12">(Dark text, for light background headers)</span></label>
                             <label class="dnd-upload-wrap <?= setting('logo_image') ? 'has-preview' : '' ?>">
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
-                                <div class="dnd-upload-subtext">PNG, JPG, WebP</div>
+                                <div class="dnd-upload-subtext">PNG, WebP with transparent background</div>
                                 <input type="checkbox" name="remove_logo_image" id="rm_logo" value="1" class="d-none">
                                 <input type="file" name="logo_image" accept="image/*" data-remove-target="rm_logo">
                                 <div class="dnd-preview-container">
                                     <?php if ($logoImage = setting('logo_image')): ?>
                                         <div class="p-2 bg-light rounded d-inline-block border">
-                                            <img src="<?= e(upload_url($logoImage)) ?>" style="max-height:50px">
+                                            <img src="<?= e(upload_url($logoImage)) ?>" style="max-height:48px">
                                         </div>
                                     <?php endif; ?>
                                 </div>
@@ -249,18 +301,20 @@ $heroVideo = setting('hero_video');
                                 </div>
                             </label>
                         </div>
+
+                        <!-- Light Logo -->
                         <div class="col-12">
-                            <label class="form-label">Logo image (Light / White text) <span class="text-muted fs-12">Used on dark hero backgrounds</span></label>
+                            <label class="form-label fw-medium fs-13">Light Logo <span class="text-muted fs-12">(White text, for dark hero overlays &amp; footers)</span></label>
                             <label class="dnd-upload-wrap <?= setting('logo_image_light') ? 'has-preview' : '' ?>">
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
-                                <div class="dnd-upload-subtext">PNG, JPG, WebP</div>
+                                <div class="dnd-upload-subtext">PNG, WebP with transparent background</div>
                                 <input type="checkbox" name="remove_logo_image_light" id="rm_logo_light" value="1" class="d-none">
                                 <input type="file" name="logo_image_light" accept="image/*" data-remove-target="rm_logo_light">
                                 <div class="dnd-preview-container">
                                     <?php if ($logoLight = setting('logo_image_light')): ?>
-                                        <div class="p-2 bg-dark rounded d-inline-block">
-                                            <img src="<?= e(upload_url($logoLight)) ?>" style="max-height:50px">
+                                        <div class="p-3 bg-dark rounded d-inline-block shadow-sm">
+                                            <img src="<?= e(upload_url($logoLight)) ?>" style="max-height:48px">
                                         </div>
                                     <?php endif; ?>
                                 </div>
@@ -272,12 +326,14 @@ $heroVideo = setting('hero_video');
                                 </div>
                             </label>
                         </div>
+
+                        <!-- Favicon -->
                         <div class="col-12">
-                            <label class="form-label">Favicon <span class="text-muted fs-12">(ICO/PNG/WebP, small size)</span></label>
+                            <label class="form-label fw-medium fs-13">Favicon Icon <span class="text-muted fs-12">(Small icon for browser tabs &amp; bookmarks)</span></label>
                             <label class="dnd-upload-wrap <?= setting('favicon') ? 'has-preview' : '' ?>">
                                 <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
                                 <div class="dnd-upload-text">Drag and drop or press to upload</div>
-                                <div class="dnd-upload-subtext">ICO, PNG, WebP</div>
+                                <div class="dnd-upload-subtext">ICO, PNG, WebP (e.g. 32x32px or 64x64px)</div>
                                 <input type="checkbox" name="remove_favicon" id="rm_favicon" value="1" class="d-none">
                                 <input type="file" name="favicon" accept="image/*,.ico" data-remove-target="rm_favicon">
                                 <div class="dnd-preview-container">
@@ -295,137 +351,24 @@ $heroVideo = setting('hero_video');
                                 </div>
                             </label>
                         </div>
-
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Socials -->
-        <div class="col-12 col-xl-6">
-            <div class="card h-100">
-                <div class="card-header"><h5 class="card-title mb-0">Social links</h5></div>
-                <div class="card-body">
-                    <div class="row g-3">
-                        <?php foreach ([
-                            'social_instagram' => ['Instagram', 'ri-instagram-line'],
-                            'social_telegram'  => ['Telegram', 'ri-telegram-line'],
-                            'social_facebook'  => ['Facebook', 'ri-facebook-circle-line'],
-                            'social_whatsapp'  => ['WhatsApp', 'ri-whatsapp-line'],
-                        ] as $k => [$label, $icon]): ?>
-                            <div class="col-md-6">
-                                <label class="form-label"><i class="<?= $icon ?> me-1"></i><?= $label ?></label>
-                                <input type="text" name="<?= $k ?>" class="form-control" placeholder="URL or @username" value="<?= e(setting($k, '')) ?>">
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Integrations -->
-        <div class="col-12 col-xl-6">
-            <div class="card h-100">
-                <div class="card-header"><h5 class="card-title mb-0">Integrations</h5></div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label">Telegram bot token</label>
-                        <input type="text" name="telegram_bot_token" class="form-control" value="<?= e(setting('telegram_bot_token', '')) ?>" placeholder="123456:ABC-...">
-                        <div class="form-text">New registrations &amp; messages ping this bot.</div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Telegram chat ID</label>
-                        <input type="text" name="telegram_chat_id" class="form-control" value="<?= e(setting('telegram_chat_id', '')) ?>" placeholder="e.g. 12345678 or -100…">
-                        <div class="form-text">
-                            DM the bot (or add it to your group) first. Get the id from
-                            <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a>.
-                            <button type="submit" form="tgTestForm" class="btn btn-sm btn-outline-primary ms-2">
-                                <i class="ri-send-plane-line"></i> Send test message
-                            </button>
-                            <span class="text-muted">(save first)</span>
-                        </div>
-                    </div>
-                    <div class="mb-0">
-                        <label class="form-label">Google Maps API Key</label>
-                        <input type="text" name="google_maps_api_key" class="form-control" value="<?= e(setting('google_maps_api_key', '')) ?>">
-                        <div class="form-text">Used for the tour route picker and public map.</div>
-                    </div>
-
-                    <hr class="my-4">
-
-                    <h6 class="mb-3">Webmail settings</h6>
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label">IMAP host</label>
-                            <input type="text" name="mail_imap_host" class="form-control" value="<?= e(setting('mail_imap_host', 'mail.silknaviora.uz')) ?>" placeholder="mail.example.com">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">IMAP port</label>
-                            <input type="number" name="mail_imap_port" class="form-control" value="<?= e(setting('mail_imap_port', '143')) ?>" min="1" max="65535" placeholder="143 (non-SSL/local) or 993 (SSL)">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">SMTP host</label>
-                            <input type="text" name="mail_smtp_host" class="form-control" value="<?= e(setting('mail_smtp_host', 'mail.silknaviora.uz')) ?>" placeholder="mail.example.com">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">SMTP port</label>
-                            <input type="number" name="mail_smtp_port" class="form-control" value="<?= e(setting('mail_smtp_port', '587')) ?>" min="1" max="65535">
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Mail username</label>
-                            <input type="email" name="mail_username" class="form-control" value="<?= e(setting('mail_username', 'info@silknaviora.uz')) ?>" placeholder="info@example.com">
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Mail password</label>
-                            <input type="password" name="mail_password" class="form-control" value="" placeholder="<?= setting('mail_password', '') !== '' ? '••••••••  (saved — leave blank to keep)' : 'Enter mailbox password' ?>" autocomplete="new-password">
-                            <div class="form-text">Use the same mailbox for inbox and sending. Leave blank to keep the current password.</div>
-                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="my-3">
-        <button class="btn btn-primary"><i class="ri-save-line me-1"></i> Save settings</button>
+    <!-- Sticky action bar -->
+    <div class="card mt-4 border-0 bg-dark text-white shadow-sm rounded-4">
+        <div class="card-body py-3 px-4 d-flex align-items-center justify-content-between flex-wrap gap-3">
+            <div class="d-flex align-items-center gap-2">
+                <i class="ri-information-fill text-primary fs-20"></i>
+                <span class="fs-14 fw-medium">All visual brand updates reflect instantly on the user-facing website.</span>
+            </div>
+            <button type="submit" class="btn btn-primary px-5 rounded-pill fw-semibold shadow-sm">
+                <i class="ri-save-line me-2"></i> Save General Settings
+            </button>
+        </div>
     </div>
 </form>
-
-<!-- Standalone form for the Telegram test button (lives outside the main form) -->
-<form id="tgTestForm" method="post" action="settings" class="d-none">
-    <?= csrf_field() ?>
-    <input type="hidden" name="action" value="test_telegram">
-</form>
-
-<!-- Change login -->
-<div class="card">
-    <div class="card-header"><h5 class="card-title mb-0">Change login</h5></div>
-    <div class="card-body">
-        <form method="post" action="settings" class="row g-3" autocomplete="off">
-            <?= csrf_field() ?>
-            <input type="hidden" name="action" value="credentials">
-            <div class="col-md-4">
-                <label class="form-label">Current password <span class="text-danger">*</span></label>
-                <input type="password" name="current_password" class="form-control" required>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label">New username</label>
-                <input type="text" name="new_username" class="form-control" value="<?= e($me['username']) ?>">
-            </div>
-            <div class="col-md-4"></div>
-            <div class="col-md-4">
-                <label class="form-label">New password <span class="text-muted fs-12">(leave blank to keep)</span></label>
-                <input type="password" name="new_password" class="form-control">
-            </div>
-            <div class="col-md-4">
-                <label class="form-label">Confirm new password</label>
-                <input type="password" name="confirm_password" class="form-control">
-            </div>
-            <div class="col-12">
-                <button class="btn btn-outline-primary"><i class="ri-lock-line me-1"></i> Update login</button>
-            </div>
-        </form>
-    </div>
-</div>
 
 <?php require __DIR__ . '/partials/foot.php'; ?>

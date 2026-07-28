@@ -115,7 +115,19 @@ $logoLight = setting('logo_image_light');
                 <li class="pe-slide">
                     <a href="<?= BASE_PATH ?>/settings" class="pe-nav-link<?= $is('settings') ?>">
                         <i class="ri-settings-3-line pe-nav-icon"></i>
-                        <span class="pe-nav-content">Settings</span>
+                        <span class="pe-nav-content">General Settings</span>
+                    </a>
+                </li>
+                <li class="pe-slide">
+                    <a href="<?= BASE_PATH ?>/integrations" class="pe-nav-link<?= $is('integrations') ?>">
+                        <i class="ri-plug-2-line pe-nav-icon"></i>
+                        <span class="pe-nav-content">Integrations &amp; Mail</span>
+                    </a>
+                </li>
+                <li class="pe-slide">
+                    <a href="<?= BASE_PATH ?>/account" class="pe-nav-link<?= $is('account') ?>">
+                        <i class="ri-shield-user-line pe-nav-icon"></i>
+                        <span class="pe-nav-content">Admin Account</span>
                     </a>
                 </li>
                 <li class="pe-slide">
