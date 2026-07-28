@@ -181,68 +181,117 @@ class MailClient {
     }
 
     public function sendMessage($to, $subject, $body) {
-        $mail = new PHPMailer(true);
-        $isLocal = in_array(strtolower(trim($this->smtpHost)), ['127.0.0.1', 'localhost', '::1'], true);
+        $strategies = [
+            // Strategy 1: User Configured SMTP Settings
+            [
+                'name' => "Configured SMTP ({$this->smtpHost}:{$this->smtpPort})",
+                'type' => 'smtp',
+                'host' => $this->smtpHost,
+                'port' => $this->smtpPort,
+                'auth' => !empty($this->login) && !empty($this->password),
+                'user' => $this->login,
+                'pass' => $this->password,
+                'secure' => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ($this->smtpPort === 587 ? PHPMailer::ENCRYPTION_STARTTLS : '')),
+                'autotls' => ($this->smtpPort !== 25)
+            ],
+            // Strategy 2: Localhost Relaying on Configured Port (Bypasses firewall hairpin & DNS issues)
+            [
+                'name' => "Localhost Relaying (127.0.0.1:{$this->smtpPort})",
+                'type' => 'smtp',
+                'host' => '127.0.0.1',
+                'port' => $this->smtpPort,
+                'auth' => !empty($this->login) && !empty($this->password),
+                'user' => $this->login,
+                'pass' => $this->password,
+                'secure' => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ($this->smtpPort === 587 ? PHPMailer::ENCRYPTION_STARTTLS : '')),
+                'autotls' => false
+            ],
+            // Strategy 3: Localhost Port 25 Direct Relay (No Auth, No TLS - standard Postfix local delivery)
+            [
+                'name' => "Localhost Direct Relay (127.0.0.1:25)",
+                'type' => 'smtp',
+                'host' => '127.0.0.1',
+                'port' => 25,
+                'auth' => false,
+                'user' => '',
+                'pass' => '',
+                'secure' => '',
+                'autotls' => false
+            ],
+            // Strategy 4: Localhost Port 587 Unauthenticated Direct Relay
+            [
+                'name' => "Localhost Direct Relay (127.0.0.1:587)",
+                'type' => 'smtp',
+                'host' => '127.0.0.1',
+                'port' => 587,
+                'auth' => false,
+                'user' => '',
+                'pass' => '',
+                'secure' => '',
+                'autotls' => false
+            ],
+            // Strategy 5: Local Server Sendmail Binary (Bypasses all network TCP sockets)
+            [
+                'name' => "Local Sendmail Service (/usr/sbin/sendmail)",
+                'type' => 'sendmail'
+            ],
+            // Strategy 6: PHP Native mail() function fallback
+            [
+                'name' => "PHP Native Mail Daemon",
+                'type' => 'mail'
+            ]
+        ];
 
-        try {
-            // Server settings
-            $mail->isSMTP();
-            $mail->Host       = $this->smtpHost;
-            $mail->SMTPAuth   = !empty($this->login) && !empty($this->password);
-            $mail->Username   = $this->login;
-            $mail->Password   = $this->password;
-            
-            if ($this->smtpPort === 465) {
-                $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-            } elseif ($this->smtpPort === 587) {
-                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            } else {
-                $mail->SMTPSecure = '';
-                $mail->SMTPAutoTLS = false;
-            }
-            $mail->Port       = $this->smtpPort;
-
-            // Prevent SSL hostname mismatch errors when connecting to 127.0.0.1 or local mail servers
-            $mail->SMTPOptions = [
-                'ssl' => [
-                    'verify_peer'       => false,
-                    'verify_peer_name'  => false,
-                    'allow_self_signed' => true,
-                ],
-            ];
-
-            // Recipients
-            $mail->setFrom($this->login, 'Silk Naviora');
-            $mail->addAddress($to);
-
-            // Content
-            $mail->isHTML(true);
-            $mail->Subject = $subject;
-            $mail->Body    = $body;
-            $mail->AltBody = strip_tags($body);
-
-            $mail->send();
-            return true;
-        } catch (\Throwable $e) {
-            $firstError = $mail->ErrorInfo ?: $e->getMessage();
-            error_log("First SMTP send attempt failed: {$firstError}");
-
-            // Automatic fallback for local Postfix servers:
-            // Many Ubuntu VPS Postfix implementations disallow SASL auth or forced STARTTLS over loopback connections (127.0.0.1).
-            if ($isLocal) {
-                try {
-                    $mail->SMTPAuth = false;
-                    $mail->SMTPSecure = '';
-                    $mail->SMTPAutoTLS = false;
-                    $mail->send();
-                    return true;
-                } catch (\Throwable $fallbackError) {
-                    $secondError = $mail->ErrorInfo ?: $fallbackError->getMessage();
-                    error_log("Fallback SMTP send failed: {$secondError}");
+        $errors = [];
+        foreach ($strategies as $strat) {
+            $mail = new PHPMailer(true);
+            try {
+                if ($strat['type'] === 'smtp') {
+                    $mail->isSMTP();
+                    $mail->Host       = $strat['host'];
+                    $mail->Port       = $strat['port'];
+                    $mail->SMTPAuth   = $strat['auth'];
+                    if ($strat['auth']) {
+                        $mail->Username = $strat['user'];
+                        $mail->Password = $strat['pass'];
+                    }
+                    $mail->SMTPSecure = $strat['secure'];
+                    $mail->SMTPAutoTLS = $strat['autotls'];
+                    $mail->Timeout    = 5; // Rapid switch timeout so fallback executes without hanging web UI
+                    $mail->SMTPOptions = [
+                        'ssl' => [
+                            'verify_peer'       => false,
+                            'verify_peer_name'  => false,
+                            'allow_self_signed' => true,
+                        ],
+                    ];
+                } elseif ($strat['type'] === 'sendmail') {
+                    if (!file_exists('/usr/sbin/sendmail') && !file_exists('/usr/lib/sendmail')) {
+                        continue;
+                    }
+                    $mail->isSendmail();
+                } elseif ($strat['type'] === 'mail') {
+                    $mail->isMail();
                 }
-            }
 
-            throw new \RuntimeException($firstError);
+                $mail->setFrom($this->login, 'Silk Naviora');
+                $mail->addAddress($to);
+
+                $mail->isHTML(true);
+                $mail->Subject = $subject;
+                $mail->Body    = $body;
+                $mail->AltBody = strip_tags($body);
+
+                $mail->send();
+                error_log("Successfully sent email using strategy: " . $strat['name']);
+                return true;
+            } catch (\Throwable $e) {
+                $err = $mail->ErrorInfo ?: $e->getMessage();
+                error_log("Strategy [{$strat['name']}] failed: {$err}");
+                $errors[] = "{$strat['name']} -> {$err}";
+            }
         }
+
+        throw new \RuntimeException("All delivery attempts failed:\n" . implode("\n", array_unique($errors)));
     }
 }
