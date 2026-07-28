@@ -6,20 +6,26 @@ require_once __DIR__ . '/app/MailClient.php';
 
 $mailClient = new \App\MailClient();
 
-// Handle AJAX requests
+// Handle AJAX GET requests
 if (isset($_GET['action'])) {
     if (session_status() === PHP_SESSION_ACTIVE) {
-        session_write_close(); // Release session lock instantly so IMAP retries never freeze other admin tabs
+        session_write_close();
     }
     header('Content-Type: application/json');
     try {
         if ($_GET['action'] === 'inbox') {
             $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
             echo json_encode($mailClient->getInbox($page));
+        } elseif ($_GET['action'] === 'sent') {
+            $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+            echo json_encode($mailClient->getSentMessages($page));
         } elseif ($_GET['action'] === 'message' && isset($_GET['id'])) {
-            echo json_encode($mailClient->getMessage($_GET['id']));
+            $folder = $_GET['folder'] ?? 'INBOX';
+            echo json_encode($mailClient->getMessage($_GET['id'], $folder));
         } elseif ($_GET['action'] === 'delete' && isset($_GET['id'])) {
             echo json_encode(['success' => $mailClient->deleteMessage($_GET['id'])]);
+        } elseif ($_GET['action'] === 'mark_unread' && isset($_GET['id'])) {
+            echo json_encode(['success' => $mailClient->markAsUnread($_GET['id'])]);
         }
     } catch (\Exception $e) {
         echo json_encode(['error' => $e->getMessage()]);
@@ -27,16 +33,22 @@ if (isset($_GET['action'])) {
     exit;
 }
 
+// Handle POST — send email
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'send') {
     csrf_verify();
-    $to = input('to', '');
+    $to      = input('to', '');
     $subject = input('subject', '');
-    $body = input('body', '');
+    $body    = input('body', '');
+    $cc      = input('cc', '');
+    $bcc     = input('bcc', '');
+    $attachments = $_FILES['attachments'] ?? [];
     
-    $isAjax = !empty($_POST['ajax']) || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false);
+    $isAjax = !empty($_POST['ajax'])
+        || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+        || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false);
 
     try {
-        if ($mailClient->sendMessage($to, $subject, $body)) {
+        if ($mailClient->sendMessage($to, $subject, $body, $cc, $bcc, $attachments)) {
             if ($isAjax) {
                 while (ob_get_level()) { ob_end_clean(); }
                 header('Content-Type: application/json');
@@ -176,6 +188,7 @@ require __DIR__ . '/partials/head.php';
         border-radius: 0 20px 20px 0;
         margin-right: 16px;
         transition: background-color 0.15s, font-weight 0.15s;
+        cursor: pointer;
     }
     .gmail-nav-item:hover {
         background: rgba(0, 0, 0, 0.05);
@@ -289,6 +302,14 @@ require __DIR__ . '/partials/head.php';
         display: flex;
     }
 
+    /* Attachment indicator */
+    .gmail-attach-icon {
+        color: #5f6368;
+        font-size: 14px;
+        margin-right: 8px;
+        flex-shrink: 0;
+    }
+
     /* Icon Buttons (Circular Material styles) */
     .gmail-icon-btn {
         width: 36px;
@@ -371,6 +392,37 @@ require __DIR__ . '/partials/head.php';
         background: #ffffff;
     }
 
+    /* CC/BCC toggle */
+    .ccbcc-toggle {
+        font-size: 13px;
+        color: #5f6368;
+        cursor: pointer;
+        text-decoration: none;
+        font-weight: 500;
+    }
+    .ccbcc-toggle:hover {
+        color: var(--gmail-primary);
+    }
+
+    /* Attachment dropzone */
+    .gmail-attach-zone {
+        border: 2px dashed #dadce0;
+        border-radius: 12px;
+        padding: 12px 16px;
+        text-align: center;
+        color: #5f6368;
+        font-size: 13px;
+        cursor: pointer;
+        transition: border-color 0.2s, background-color 0.2s;
+    }
+    .gmail-attach-zone:hover, .gmail-attach-zone.dragover {
+        border-color: var(--gmail-primary);
+        background: #eaf1fb;
+    }
+    .gmail-attach-zone input[type="file"] {
+        display: none;
+    }
+
     @media (max-width: 991.98px) {
         .gmail-workspace {
             flex-direction: column;
@@ -406,7 +458,7 @@ require __DIR__ . '/partials/head.php';
         </div>
 
         <div class="d-flex align-items-center gap-1">
-            <button type="button" class="gmail-icon-btn" onclick="loadInbox()" title="Refresh Inbox">
+            <button type="button" class="gmail-icon-btn" onclick="loadCurrentFolder()" title="Refresh">
                 <i class="ri-refresh-line fs-18"></i>
             </button>
         </div>
@@ -422,19 +474,26 @@ require __DIR__ . '/partials/head.php';
             </button>
             
             <div class="flex-grow-1">
-                <a href="#" class="gmail-nav-item active" onclick="clearSearch(); return false;">
+                <a href="#" class="gmail-nav-item active" data-folder="inbox" onclick="switchFolder('inbox'); return false;">
                     <span class="d-flex align-items-center gap-3">
                         <i class="ri-inbox-archive-fill fs-18"></i>
                         <span>Inbox</span>
                     </span>
                     <span class="badge bg-primary rounded-pill fs-11 ms-2" id="inboxBadge">...</span>
                 </a>
-                <a href="#" class="gmail-nav-item" onclick="filterByUnread(); return false;" title="Filter unread messages">
+                <a href="#" class="gmail-nav-item" data-folder="unread" onclick="switchFolder('unread'); return false;">
                     <span class="d-flex align-items-center gap-3">
                         <i class="ri-mail-unread-line fs-18 text-muted"></i>
                         <span>Unread</span>
                     </span>
                     <span class="badge bg-secondary-subtle text-dark rounded-pill fs-11 ms-2" id="unreadBadge">0</span>
+                </a>
+                <a href="#" class="gmail-nav-item" data-folder="sent" onclick="switchFolder('sent'); return false;">
+                    <span class="d-flex align-items-center gap-3">
+                        <i class="ri-send-plane-fill fs-18 text-muted"></i>
+                        <span>Sent</span>
+                    </span>
+                    <span class="badge bg-secondary-subtle text-dark rounded-pill fs-11 ms-2" id="sentBadge">—</span>
                 </a>
             </div>
             
@@ -460,9 +519,9 @@ require __DIR__ . '/partials/head.php';
                     
                     <div id="emptySearchState" class="text-center py-5 my-5 d-none">
                         <i class="ri-search-2-line fs-1 opacity-25 d-block mb-3"></i>
-                        <h6 class="text-dark fw-semibold">No matching messages in your inbox</h6>
+                        <h6 class="text-dark fw-semibold">No matching messages found</h6>
                         <p class="text-muted fs-13 mb-3">Try searching for a different keyword or check your spelling.</p>
-                        <button class="btn btn-sm btn-outline-secondary px-4 rounded-pill" onclick="clearSearch()">Reset Search Filter</button>
+                        <button class="btn btn-sm btn-outline-secondary px-4 rounded-pill" onclick="clearSearch()">Reset Search</button>
                     </div>
 
                     <ul class="gmail-message-list" id="mail-list">
@@ -477,11 +536,14 @@ require __DIR__ . '/partials/head.php';
                     <!-- Reader Action Toolbar -->
                     <div class="py-2 px-3 border-bottom d-flex align-items-center justify-content-between">
                         <div class="d-flex align-items-center gap-1">
-                            <button type="button" class="gmail-icon-btn me-2" id="closeReadEmail" title="Back to Inbox">
+                            <button type="button" class="gmail-icon-btn me-2" id="closeReadEmail" title="Back to list">
                                 <i class="ri-arrow-left-line fs-20"></i>
                             </button>
                             <button type="button" class="gmail-icon-btn delete-btn" id="deleteEmailBtn" title="Delete conversation">
                                 <i class="ri-delete-bin-line fs-18"></i>
+                            </button>
+                            <button type="button" class="gmail-icon-btn" id="markUnreadBtn" title="Mark as unread">
+                                <i class="ri-mail-unread-line fs-18"></i>
                             </button>
                         </div>
                         <div>
@@ -536,10 +598,12 @@ require __DIR__ . '/partials/head.php';
     </div>
 </div>
 
-<!-- Compose Modal (Styled like Gmail Floating Window) -->
+<!-- ═══════════════════════════════════════════════════════════════════
+     COMPOSE MODAL — Full featured with CC/BCC/Attachments
+     ═══════════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="composeModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
-        <form class="modal-content border-0 shadow-lg rounded-4 overflow-hidden" method="post" action="email.php">
+        <form class="modal-content border-0 shadow-lg rounded-4 overflow-hidden" method="post" action="email.php" enctype="multipart/form-data">
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="send">
             <div class="modal-header bg-dark text-white py-3 px-4">
@@ -547,14 +611,41 @@ require __DIR__ . '/partials/head.php';
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body p-4 bg-white">
-                <div class="mb-3 border-bottom pb-2">
-                    <input type="email" name="to" class="form-control border-0 px-1 shadow-none fs-15 fw-medium" placeholder="Recipients (e.g. client@example.com)" required>
+                <!-- To field + CC/BCC toggle -->
+                <div class="mb-2 border-bottom pb-2 d-flex align-items-center">
+                    <span class="text-muted fs-13 me-2 flex-shrink-0">To</span>
+                    <input type="email" name="to" class="form-control border-0 px-1 shadow-none fs-15 fw-medium" placeholder="recipient@example.com" required>
+                    <span class="ccbcc-toggle ms-2 flex-shrink-0" onclick="toggleCcBcc('compose')">Cc/Bcc</span>
                 </div>
-                <div class="mb-3 border-bottom pb-2">
+                <!-- CC field (hidden by default) -->
+                <div class="mb-2 border-bottom pb-2 d-none" id="composeCcRow">
+                    <div class="d-flex align-items-center">
+                        <span class="text-muted fs-13 me-2 flex-shrink-0">Cc</span>
+                        <input type="text" name="cc" class="form-control border-0 px-1 shadow-none fs-14" placeholder="cc@example.com (comma-separated)">
+                    </div>
+                </div>
+                <!-- BCC field (hidden by default) -->
+                <div class="mb-2 border-bottom pb-2 d-none" id="composeBccRow">
+                    <div class="d-flex align-items-center">
+                        <span class="text-muted fs-13 me-2 flex-shrink-0">Bcc</span>
+                        <input type="text" name="bcc" class="form-control border-0 px-1 shadow-none fs-14" placeholder="bcc@example.com (comma-separated)">
+                    </div>
+                </div>
+                <!-- Subject -->
+                <div class="mb-2 border-bottom pb-2">
                     <input type="text" name="subject" class="form-control border-0 px-1 shadow-none fs-15 fw-bold" placeholder="Subject" required>
                 </div>
+                <!-- Body -->
                 <div>
-                    <textarea name="body" class="form-control border-0 px-1 shadow-none fs-15" rows="12" placeholder="Write your email here..." required style="resize: none; line-height: 1.6;"></textarea>
+                    <textarea name="body" class="form-control border-0 px-1 shadow-none fs-15" rows="10" placeholder="Write your email here..." required style="resize: none; line-height: 1.6;"></textarea>
+                </div>
+                <!-- Attachments -->
+                <div class="mt-3">
+                    <div class="gmail-attach-zone" onclick="this.querySelector('input').click()">
+                        <i class="ri-attachment-2 me-1"></i> Attach files (click or drag & drop)
+                        <input type="file" name="attachments[]" multiple onchange="showAttachNames(this, 'composeAttachList')">
+                    </div>
+                    <div id="composeAttachList" class="mt-2"></div>
                 </div>
             </div>
             <div class="modal-footer bg-light px-4 py-3 d-flex justify-content-between">
@@ -565,10 +656,12 @@ require __DIR__ . '/partials/head.php';
     </div>
 </div>
 
-<!-- Reply Modal -->
+<!-- ═══════════════════════════════════════════════════════════════════
+     REPLY MODAL — Quotes original message, supports attachments
+     ═══════════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="replyModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
-        <form class="modal-content border-0 shadow-lg rounded-4 overflow-hidden" method="post" action="email.php">
+        <form class="modal-content border-0 shadow-lg rounded-4 overflow-hidden" method="post" action="email.php" enctype="multipart/form-data">
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="send">
             <input type="hidden" name="to" id="replyTo">
@@ -577,11 +670,46 @@ require __DIR__ . '/partials/head.php';
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body p-4 bg-white">
-                <div class="mb-3 border-bottom pb-2">
+                <!-- To (readonly) -->
+                <div class="mb-2 border-bottom pb-2 d-flex align-items-center">
+                    <span class="text-muted fs-13 me-2 flex-shrink-0">To</span>
+                    <input type="text" id="replyToDisplay" class="form-control border-0 px-1 shadow-none fs-14 text-muted" readonly>
+                    <span class="ccbcc-toggle ms-2 flex-shrink-0" onclick="toggleCcBcc('reply')">Cc/Bcc</span>
+                </div>
+                <!-- CC field (hidden by default) -->
+                <div class="mb-2 border-bottom pb-2 d-none" id="replyCcRow">
+                    <div class="d-flex align-items-center">
+                        <span class="text-muted fs-13 me-2 flex-shrink-0">Cc</span>
+                        <input type="text" name="cc" class="form-control border-0 px-1 shadow-none fs-14" placeholder="cc@example.com">
+                    </div>
+                </div>
+                <!-- BCC field (hidden by default) -->
+                <div class="mb-2 border-bottom pb-2 d-none" id="replyBccRow">
+                    <div class="d-flex align-items-center">
+                        <span class="text-muted fs-13 me-2 flex-shrink-0">Bcc</span>
+                        <input type="text" name="bcc" class="form-control border-0 px-1 shadow-none fs-14" placeholder="bcc@example.com">
+                    </div>
+                </div>
+                <!-- Subject -->
+                <div class="mb-2 border-bottom pb-2">
                     <input type="text" name="subject" id="replySubject" class="form-control border-0 px-1 shadow-none fs-15 fw-bold text-muted" required readonly>
                 </div>
+                <!-- Reply body -->
                 <div>
-                    <textarea name="body" class="form-control border-0 px-1 shadow-none fs-15" rows="10" placeholder="Type your response..." required style="resize: none; line-height: 1.6;"></textarea>
+                    <textarea name="body" id="replyBody" class="form-control border-0 px-1 shadow-none fs-15" rows="6" placeholder="Type your response..." required style="resize: none; line-height: 1.6;"></textarea>
+                </div>
+                <!-- Quoted original (read-only visual context) -->
+                <div class="mt-3 border-start border-3 border-primary-subtle ps-3" id="replyQuotedBlock" style="max-height: 200px; overflow-y: auto;">
+                    <div class="fs-12 text-muted mb-1 fw-semibold" id="replyQuotedHeader">Original message</div>
+                    <div class="fs-13 text-muted" id="replyQuotedContent"></div>
+                </div>
+                <!-- Attachments -->
+                <div class="mt-3">
+                    <div class="gmail-attach-zone" onclick="this.querySelector('input').click()">
+                        <i class="ri-attachment-2 me-1"></i> Attach files
+                        <input type="file" name="attachments[]" multiple onchange="showAttachNames(this, 'replyAttachList')">
+                    </div>
+                    <div id="replyAttachList" class="mt-2"></div>
                 </div>
             </div>
             <div class="modal-footer bg-light px-4 py-3 d-flex justify-content-between">
@@ -600,7 +728,57 @@ require __DIR__ . '/partials/head.php';
 </div>
 
 <script>
-// Gmail-style Asynchronous Sending ("Send and forget" UI model)
+// ═══════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════
+let allEmails = [];
+let currentEmailId = null;
+let currentFolder = 'inbox'; // 'inbox' | 'unread' | 'sent'
+let currentMessageData = null; // Stored for quoting in reply
+
+const avatarPalettes = [
+    '#d93025', '#188038', '#1a73e8', '#e37400', '#8e24aa', 
+    '#0097a7', '#3949ab', '#c2185b', '#00796b', '#5c6bc0'
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// GMAIL-STYLE DATE FORMATTING
+// ═══════════════════════════════════════════════════════════════════
+function formatGmailDate(dateStr) {
+    try {
+        let d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        let now = new Date();
+        let diff = now - d;
+        let dayMs = 86400000;
+        
+        // Today → show time only
+        if (d.toDateString() === now.toDateString()) {
+            return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+        }
+        // Yesterday
+        let yesterday = new Date(now - dayMs);
+        if (d.toDateString() === yesterday.toDateString()) {
+            return 'Yesterday';
+        }
+        // This week (within 7 days)
+        if (diff < 7 * dayMs) {
+            return d.toLocaleDateString([], { weekday: 'short' });
+        }
+        // This year
+        if (d.getFullYear() === now.getFullYear()) {
+            return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }
+        // Older
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (e) {
+        return dateStr;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TOAST NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════
 function showGmailToast(message, type = 'loading', duration = 0) {
     const toast = document.getElementById('gmailToast');
     const icon = document.getElementById('gmailToastIcon');
@@ -621,16 +799,17 @@ function showGmailToast(message, type = 'loading', duration = 0) {
     } else if (type === 'error') {
         icon.innerHTML = '<i class="ri-error-warning-fill text-danger fs-20"></i>';
         closeBtn.style.display = 'block';
-        toast.style.background = '#3a1e20'; // Subtle dark red tone
+        toast.style.background = '#3a1e20';
     }
     
     if (duration > 0) {
-        setTimeout(() => {
-            toast.style.display = 'none';
-        }, duration);
+        setTimeout(() => { toast.style.display = 'none'; }, duration);
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ASYNC FORM SUBMISSION (Gmail "Send and Forget" model)
+// ═══════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('#composeModal form, #replyModal form').forEach(form => {
         form.addEventListener('submit', function(e) {
@@ -638,13 +817,21 @@ document.addEventListener('DOMContentLoaded', function() {
             
             let formData = new FormData(this);
             formData.append('ajax', '1');
+
+            // For reply: prepend quoted original into body
+            if (this.closest('#replyModal') && currentMessageData) {
+                let replyText = formData.get('body');
+                let quotedSender = currentMessageData.fromName || currentMessageData.fromAddress;
+                let quotedDate = currentMessageData.date || '';
+                let quotedBody = currentMessageData.bodyPlain || '';
+                let separator = `\n\n---\nOn ${quotedDate}, ${quotedSender} wrote:\n> ${quotedBody.replace(/\n/g, '\n> ')}`;
+                formData.set('body', replyText + separator);
+            }
             
-            // Optimistic UI: Immediately dismiss modal so user isn't frozen waiting for SMTP networks
             let modalEl = this.closest('.modal');
             let modalInstance = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
             modalInstance.hide();
             
-            // Display floating status banner
             showGmailToast('Sending message...', 'loading');
             
             let submitBtn = this.querySelector('button[type="submit"]');
@@ -660,7 +847,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 try {
                     return JSON.parse(text);
                 } catch(err) {
-                    throw new Error(text ? text.replace(/<[^>]*>?/gm, '').trim() : "Invalid response from server");
+                    throw new Error(text ? text.replace(/<[^>]*>?/gm, '').trim().substring(0, 200) : "Invalid response from server");
                 }
             })
             .then(data => {
@@ -670,29 +857,21 @@ document.addEventListener('DOMContentLoaded', function() {
                     showGmailToast(data.message || 'Message sent successfully!', 'success', 6000);
                 } else {
                     showGmailToast('Failed to send: ' + (data.error || 'Server error'), 'error', 0);
-                    // Automatically reopen compose modal so drafted text is not lost
                     modalInstance.show();
                 }
             })
             .catch(err => {
                 if (submitBtn) submitBtn.disabled = false;
-                showGmailToast('Error: ' + (err.message || 'Network communication error with mail server.'), 'error', 0);
+                showGmailToast('Error: ' + (err.message || 'Network error'), 'error', 0);
                 modalInstance.show();
             });
         });
     });
 });
 
-let allEmails = [];
-let currentEmailId = null;
-let currentFilter = 'all'; // 'all' | 'unread'
-
-// Google Material styling curated pastel avatar palette
-const avatarPalettes = [
-    '#d93025', '#188038', '#1a73e8', '#e37400', '#8e24aa', 
-    '#0097a7', '#3949ab', '#c2185b', '#00796b', '#5c6bc0'
-];
-
+// ═══════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════
 function getAvatarColor(str) {
     let hash = 0;
     if (!str) return avatarPalettes[0];
@@ -702,13 +881,59 @@ function getAvatarColor(str) {
     return avatarPalettes[Math.abs(hash) % avatarPalettes.length];
 }
 
+function toggleCcBcc(prefix) {
+    document.getElementById(prefix + 'CcRow').classList.toggle('d-none');
+    document.getElementById(prefix + 'BccRow').classList.toggle('d-none');
+}
+
+function showAttachNames(input, listId) {
+    let el = document.getElementById(listId);
+    if (!input.files.length) { el.innerHTML = ''; return; }
+    let html = '';
+    for (let f of input.files) {
+        let sizeKb = Math.round(f.size / 1024);
+        html += `<span class="badge bg-light text-dark border me-1 mb-1 px-2 py-1 fs-12"><i class="ri-file-line me-1"></i>${f.name} (${sizeKb} KB)</span>`;
+    }
+    el.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FOLDER SWITCHING
+// ═══════════════════════════════════════════════════════════════════
+function switchFolder(folder) {
+    currentFolder = folder;
+    
+    // Update sidebar active state
+    document.querySelectorAll('.gmail-sidebar .gmail-nav-item').forEach(el => el.classList.remove('active'));
+    let target = document.querySelector(`.gmail-nav-item[data-folder="${folder}"]`);
+    if (target) target.classList.add('active');
+
+    // Close email reader if open
+    closeEmailReader();
+    
+    // Load appropriate data
+    if (folder === 'sent') {
+        loadSent();
+    } else {
+        loadInbox();
+    }
+}
+
+function loadCurrentFolder() {
+    if (currentFolder === 'sent') loadSent();
+    else loadInbox();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// INBOX LOADING
+// ═══════════════════════════════════════════════════════════════════
 function loadInbox() {
     document.getElementById('loadingIndicator').classList.remove('d-none');
     document.getElementById('emptySearchState').classList.add('d-none');
     document.getElementById('mail-list').innerHTML = '';
     document.getElementById('inboxBadge').innerText = '...';
     document.getElementById('unreadBadge').innerText = '...';
-    document.getElementById('inboxStatusText').innerText = 'Syncing with mail daemon...';
+    document.getElementById('inboxStatusText').innerText = 'Syncing with mail server...';
     
     fetch('email.php?action=inbox')
         .then(res => res.json())
@@ -728,32 +953,59 @@ function loadInbox() {
             
             document.getElementById('inboxBadge').innerText = data.length;
             document.getElementById('unreadBadge').innerText = unreadCount;
-            document.getElementById('inboxStatusText').innerText = `${data.length} messages in vault`;
+            document.getElementById('inboxStatusText').innerText = `${data.length} messages · ${unreadCount} unread`;
             
             renderEmails();
         })
         .catch(err => {
             document.getElementById('loadingIndicator').classList.add('d-none');
-            document.getElementById('mail-list').innerHTML = '<div class="p-5 text-center text-danger fw-medium"><i class="ri-wifi-off-line fs-1 d-block mb-2"></i>Failed to reach server. Please check your connection.</div>';
+            document.getElementById('mail-list').innerHTML = '<div class="p-5 text-center text-danger fw-medium"><i class="ri-wifi-off-line fs-1 d-block mb-2"></i>Failed to reach server.</div>';
             document.getElementById('inboxStatusText').innerText = 'Network error';
         });
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SENT FOLDER LOADING
+// ═══════════════════════════════════════════════════════════════════
+function loadSent() {
+    document.getElementById('loadingIndicator').classList.remove('d-none');
+    document.getElementById('emptySearchState').classList.add('d-none');
+    document.getElementById('mail-list').innerHTML = '';
+    document.getElementById('inboxStatusText').innerText = 'Loading sent messages...';
+    
+    fetch('email.php?action=sent')
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('loadingIndicator').classList.add('d-none');
+            
+            if (data.error) {
+                document.getElementById('mail-list').innerHTML = '<div class="p-5 text-center text-danger fw-medium"><i class="ri-error-warning-line fs-1 d-block mb-2"></i>' + data.error + '</div>';
+                document.getElementById('inboxStatusText').innerText = 'Could not load Sent folder';
+                return;
+            }
+            
+            allEmails = data;
+            document.getElementById('sentBadge').innerText = data.length;
+            document.getElementById('inboxStatusText').innerText = `${data.length} sent messages`;
+            
+            renderEmails();
+        })
+        .catch(err => {
+            document.getElementById('loadingIndicator').classList.add('d-none');
+            document.getElementById('mail-list').innerHTML = '<div class="p-5 text-center text-danger fw-medium"><i class="ri-wifi-off-line fs-1 d-block mb-2"></i>Failed to reach server.</div>';
+        });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RENDER EMAIL LIST
+// ═══════════════════════════════════════════════════════════════════
 function renderEmails() {
     let query = (document.getElementById('gmailSearchInput').value || '').trim().toLowerCase();
     let clearBtn = document.getElementById('clearSearchBtn');
-    if (query.length > 0) {
-        clearBtn.classList.remove('d-none');
-    } else {
-        clearBtn.classList.add('d-none');
-    }
+    clearBtn.classList.toggle('d-none', query.length === 0);
     
     let filtered = allEmails.filter(mail => {
-        // Filter by tab type (unread vs all)
-        if (currentFilter === 'unread' && !mail.isUnread) {
-            return false;
-        }
-        // Filter by query
+        if (currentFolder === 'unread' && !mail.isUnread) return false;
         if (query) {
             let s = (mail.subject || '').toLowerCase();
             let fn = (mail.fromName || '').toLowerCase();
@@ -769,11 +1021,8 @@ function renderEmails() {
     let label = document.getElementById('listFilterLabel');
     let countEl = document.getElementById('inboxCount');
 
-    if (currentFilter === 'unread') {
-        label.innerText = query ? `Searching Unread for "${query}"` : 'Showing Unread Messages';
-    } else {
-        label.innerText = query ? `Searching Inbox for "${query}"` : 'Showing All Messages';
-    }
+    let folderLabel = currentFolder === 'sent' ? 'Sent' : (currentFolder === 'unread' ? 'Unread' : 'Inbox');
+    label.innerText = query ? `Searching ${folderLabel} for "${query}"` : `Showing ${folderLabel}`;
     countEl.innerText = `${filtered.length} of ${allEmails.length}`;
 
     if (filtered.length === 0) {
@@ -789,26 +1038,31 @@ function renderEmails() {
         let cleanName = (mail.fromName && mail.fromName !== 'null' && mail.fromName.trim() !== '') ? mail.fromName : mail.fromAddress;
         let initial = cleanName.charAt(0).toUpperCase();
         let bg = getAvatarColor(cleanName);
+        let attachIcon = mail.hasAttachments ? '<i class="ri-attachment-2 gmail-attach-icon"></i>' : '';
+        let isSent = mail.isSent || currentFolder === 'sent';
+        let readFn = isSent ? `readSentEmail(${mail.id})` : `readEmail(${mail.id})`;
+        let dateFormatted = formatGmailDate(mail.date);
         
         html += `
-        <li class="gmail-row ${unreadClass}" onclick="readEmail(${mail.id})">
+        <li class="gmail-row ${unreadClass}" onclick="${readFn}">
             <div class="gmail-avatar" style="background-color: ${bg};">${initial}</div>
             <div class="gmail-sender">
                 <span class="text-truncate d-block">${cleanName}</span>
             </div>
             <div class="gmail-subject-snippet">
+                ${attachIcon}
                 <span class="gmail-subject fw-medium">${mail.subject || 'No Subject'}</span>
-                <span class="gmail-snippet">- ${mail.snippet || ''}</span>
+                <span class="gmail-snippet">— ${mail.snippet || ''}</span>
             </div>
             <div class="gmail-meta-right">
-                <span class="gmail-date">${mail.date}</span>
+                <span class="gmail-date">${dateFormatted}</span>
                 <div class="gmail-hover-actions">
-                    <button type="button" class="gmail-icon-btn" title="Open Conversation" onclick="event.stopPropagation(); readEmail(${mail.id})">
+                    <button type="button" class="gmail-icon-btn" title="Open" onclick="event.stopPropagation(); ${readFn}">
                         <i class="ri-mail-open-line fs-16"></i>
                     </button>
-                    <button type="button" class="gmail-icon-btn delete-btn" title="Delete from Mailbox" onclick="event.stopPropagation(); deleteFromList(${mail.id})">
+                    ${!isSent ? `<button type="button" class="gmail-icon-btn delete-btn" title="Delete" onclick="event.stopPropagation(); deleteFromList(${mail.id})">
                         <i class="ri-delete-bin-line fs-16"></i>
-                    </button>
+                    </button>` : ''}
                 </div>
             </div>
         </li>
@@ -817,41 +1071,20 @@ function renderEmails() {
     listEl.innerHTML = html;
 }
 
-function filterEmails() {
-    renderEmails();
-}
+function filterEmails() { renderEmails(); }
 
 function clearSearch() {
     document.getElementById('gmailSearchInput').value = '';
-    currentFilter = 'all';
-    updateNavStates('all');
-    renderEmails();
+    if (currentFolder === 'unread') switchFolder('inbox');
+    else renderEmails();
 }
 
-function filterByUnread() {
-    document.getElementById('gmailSearchInput').value = '';
-    currentFilter = 'unread';
-    updateNavStates('unread');
-    renderEmails();
-}
-
-function updateNavStates(mode) {
-    let items = document.querySelectorAll('.gmail-sidebar .gmail-nav-item');
-    items.forEach((el, idx) => {
-        if (mode === 'all' && idx === 0) el.classList.add('active');
-        else if (mode === 'unread' && idx === 1) el.classList.add('active');
-        else el.classList.remove('active');
-    });
-}
-
+// ═══════════════════════════════════════════════════════════════════
+// EMAIL READING
+// ═══════════════════════════════════════════════════════════════════
 function readEmail(id) {
     currentEmailId = id;
-    
-    // Switch views seamlessly
-    document.getElementById('mailListView').classList.add('d-none');
-    document.getElementById('mailListView').classList.remove('d-flex');
-    document.getElementById('emailDetailsView').classList.remove('d-none');
-    document.getElementById('emailDetailsView').classList.add('d-flex');
+    showEmailReader();
     
     document.getElementById('detailBody').innerHTML = '<div class="text-center my-5 py-5"><div class="spinner-border text-primary my-2" role="status"></div><div class="text-muted fs-14 mt-2">Opening conversation...</div></div>';
     if (document.getElementById('detailAttachmentsContainer')) {
@@ -866,63 +1099,14 @@ function readEmail(id) {
                 return;
             }
             
-            document.getElementById('detailSubject').innerText = data.subject || 'No Subject';
+            currentMessageData = data; // Store for reply quoting
+            populateEmailReader(data);
             
-            let hasValidName = (data.fromName && data.fromName !== 'null' && data.fromName.trim() !== '' && data.fromName !== data.fromAddress);
-            let displaySender = hasValidName ? data.fromName : data.fromAddress;
-            let bg = getAvatarColor(displaySender);
-            
-            document.getElementById('detailFromName').innerText = displaySender;
-            document.getElementById('detailFromAddress').innerText = hasValidName ? `<${data.fromAddress}>` : '';
-            let avatarEl = document.getElementById('detailAvatar');
-            avatarEl.innerText = displaySender.charAt(0).toUpperCase();
-            avatarEl.style.backgroundColor = bg;
-            
-            document.getElementById('detailDate').innerText = data.date;
-            document.getElementById('detailBody').innerHTML = data.body;
-            document.getElementById('quickReplySenderName').innerText = displaySender;
-            
-            // Render attachments smoothly
-            let attachmentsContainer = document.getElementById('detailAttachmentsContainer');
-            let attachmentsList = document.getElementById('detailAttachments');
-            let attachmentsCount = document.getElementById('attachmentsCount');
-            if (attachmentsContainer && attachmentsList && attachmentsCount) {
-                attachmentsList.innerHTML = '';
-                if (data.attachments && data.attachments.length > 0) {
-                    attachmentsCount.innerText = data.attachments.length;
-                    let attHtml = '';
-                    data.attachments.forEach(att => {
-                        let sizeStr = att.size ? ` (${Math.round(att.size / 1024)} KB)` : '';
-                        let downloadLink = att.url ? att.url : '#';
-                        let target = att.url ? 'target="_blank" download' : 'onclick="alert(\'Attachment file path unavailable on server.\'); return false;"';
-                        
-                        attHtml += `
-                        <a href="${downloadLink}" ${target} class="btn btn-outline-secondary d-flex align-items-center gap-2 px-3 py-2 text-decoration-none rounded-3 bg-light-subtle text-dark border shadow-sm">
-                            <i class="ri-file-download-fill fs-20 text-primary"></i>
-                            <div class="text-start overflow-hidden">
-                                <div class="fw-bold fs-13 text-truncate text-dark" style="max-width: 240px;">${att.name}</div>
-                                <div class="text-muted fs-11">Click to download${sizeStr}</div>
-                            </div>
-                        </a>
-                        `;
-                    });
-                    attachmentsList.innerHTML = attHtml;
-                    attachmentsContainer.classList.remove('d-none');
-                } else {
-                    attachmentsContainer.classList.add('d-none');
-                }
-            }
-            
-            // Update reply defaults
-            document.getElementById('replyTo').value = data.fromAddress;
-            document.getElementById('replySubject').value = (data.subject || '').startsWith('Re:') ? data.subject : 'Re: ' + (data.subject || '');
-            
-            // Mark item as read in local cache & update badges
+            // Mark as read in local cache
             let cached = allEmails.find(e => e.id == id);
             if (cached && cached.isUnread) {
                 cached.isUnread = 0;
-                let unreadCount = allEmails.filter(m => m.isUnread).length;
-                document.getElementById('unreadBadge').innerText = unreadCount;
+                document.getElementById('unreadBadge').innerText = allEmails.filter(m => m.isUnread).length;
             }
         })
         .catch(err => {
@@ -930,41 +1114,133 @@ function readEmail(id) {
         });
 }
 
-function deleteFromList(id) {
-    if (!confirm('Move this message to trash / delete permanently from server?')) return;
+function readSentEmail(id) {
+    currentEmailId = id;
+    showEmailReader();
     
-    // Optimistically remove from UI
-    allEmails = allEmails.filter(m => m.id !== id);
-    renderEmails();
+    document.getElementById('detailBody').innerHTML = '<div class="text-center my-5 py-5"><div class="spinner-border text-primary my-2" role="status"></div><div class="text-muted fs-14 mt-2">Opening sent message...</div></div>';
     
-    let unreadCount = allEmails.filter(m => m.isUnread).length;
-    document.getElementById('inboxBadge').innerText = allEmails.length;
-    document.getElementById('unreadBadge').innerText = unreadCount;
-    
-    fetch('email.php?action=delete&id=' + id)
+    let sentFolder = 'Sent'; // Default; the server auto-detects
+    fetch('email.php?action=message&id=' + id + '&folder=' + encodeURIComponent(sentFolder))
         .then(res => res.json())
         .then(data => {
-            if (!data.success) {
-                alert('Server warning: failed to execute remote IMAP delete.');
-                loadInbox();
+            if (data.error) {
+                document.getElementById('detailBody').innerHTML = '<div class="alert alert-danger my-4">' + data.error + '</div>';
+                return;
             }
+            currentMessageData = data;
+            populateEmailReader(data);
         })
-        .catch(() => {
-            loadInbox();
+        .catch(err => {
+            document.getElementById('detailBody').innerHTML = '<div class="alert alert-danger my-4">Network error.</div>';
         });
 }
 
-document.getElementById('closeReadEmail').addEventListener('click', function() {
+function populateEmailReader(data) {
+    document.getElementById('detailSubject').innerText = data.subject || 'No Subject';
+    
+    let hasValidName = (data.fromName && data.fromName !== 'null' && data.fromName.trim() !== '' && data.fromName !== data.fromAddress);
+    let displaySender = hasValidName ? data.fromName : data.fromAddress;
+    let bg = getAvatarColor(displaySender);
+    
+    document.getElementById('detailFromName').innerText = displaySender;
+    document.getElementById('detailFromAddress').innerText = hasValidName ? `<${data.fromAddress}>` : '';
+    let avatarEl = document.getElementById('detailAvatar');
+    avatarEl.innerText = displaySender.charAt(0).toUpperCase();
+    avatarEl.style.backgroundColor = bg;
+    
+    document.getElementById('detailDate').innerText = data.date;
+    document.getElementById('detailBody').innerHTML = data.body;
+    document.getElementById('quickReplySenderName').innerText = displaySender;
+    
+    // Attachments
+    let attachmentsContainer = document.getElementById('detailAttachmentsContainer');
+    let attachmentsList = document.getElementById('detailAttachments');
+    let attachmentsCount = document.getElementById('attachmentsCount');
+    if (attachmentsContainer && attachmentsList && attachmentsCount) {
+        attachmentsList.innerHTML = '';
+        if (data.attachments && data.attachments.length > 0) {
+            attachmentsCount.innerText = data.attachments.length;
+            let attHtml = '';
+            data.attachments.forEach(att => {
+                let sizeStr = att.size ? ` (${Math.round(att.size / 1024)} KB)` : '';
+                let downloadLink = att.url ? att.url : '#';
+                let target = att.url ? 'target="_blank" download' : 'onclick="alert(\'Attachment file not available.\'); return false;"';
+                attHtml += `
+                <a href="${downloadLink}" ${target} class="btn btn-outline-secondary d-flex align-items-center gap-2 px-3 py-2 text-decoration-none rounded-3 bg-light-subtle text-dark border shadow-sm">
+                    <i class="ri-file-download-fill fs-20 text-primary"></i>
+                    <div class="text-start overflow-hidden">
+                        <div class="fw-bold fs-13 text-truncate text-dark" style="max-width: 240px;">${att.name}</div>
+                        <div class="text-muted fs-11">Click to download${sizeStr}</div>
+                    </div>
+                </a>`;
+            });
+            attachmentsList.innerHTML = attHtml;
+            attachmentsContainer.classList.remove('d-none');
+        } else {
+            attachmentsContainer.classList.add('d-none');
+        }
+    }
+    
+    // Set up reply defaults
+    document.getElementById('replyTo').value = data.fromAddress;
+    document.getElementById('replyToDisplay').value = data.fromAddress;
+    document.getElementById('replySubject').value = (data.subject || '').startsWith('Re:') ? data.subject : 'Re: ' + (data.subject || '');
+    
+    // Populate quoted content in reply modal
+    let quotedContent = document.getElementById('replyQuotedContent');
+    let quotedHeader = document.getElementById('replyQuotedHeader');
+    if (quotedContent && quotedHeader) {
+        quotedHeader.innerText = `On ${data.date}, ${displaySender} wrote:`;
+        quotedContent.innerText = data.bodyPlain || (data.body ? data.body.replace(/<[^>]*>?/gm, '') : '');
+    }
+}
+
+function showEmailReader() {
+    document.getElementById('mailListView').classList.add('d-none');
+    document.getElementById('mailListView').classList.remove('d-flex');
+    document.getElementById('emailDetailsView').classList.remove('d-none');
+    document.getElementById('emailDetailsView').classList.add('d-flex');
+}
+
+function closeEmailReader() {
     document.getElementById('emailDetailsView').classList.add('d-none');
     document.getElementById('emailDetailsView').classList.remove('d-flex');
     document.getElementById('mailListView').classList.remove('d-none');
     document.getElementById('mailListView').classList.add('d-flex');
     currentEmailId = null;
-    renderEmails(); // Re-render cleanly with updated unread statuses
-});
+    currentMessageData = null;
+    renderEmails();
+}
 
+// ═══════════════════════════════════════════════════════════════════
+// DELETE & MARK UNREAD
+// ═══════════════════════════════════════════════════════════════════
+function deleteFromList(id) {
+    if (!confirm('Delete this message from the server?')) return;
+    
+    allEmails = allEmails.filter(m => m.id !== id);
+    renderEmails();
+    document.getElementById('inboxBadge').innerText = allEmails.length;
+    document.getElementById('unreadBadge').innerText = allEmails.filter(m => m.isUnread).length;
+    
+    fetch('email.php?action=delete&id=' + id)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                showGmailToast('Failed to delete message on server.', 'error', 5000);
+                loadCurrentFolder();
+            }
+        })
+        .catch(() => { loadCurrentFolder(); });
+}
+
+// Close reader
+document.getElementById('closeReadEmail').addEventListener('click', closeEmailReader);
+
+// Delete from reader
 document.getElementById('deleteEmailBtn').addEventListener('click', function() {
-    if (!currentEmailId || !confirm('Permanently delete this email from your mailbox?')) return;
+    if (!currentEmailId || !confirm('Permanently delete this email?')) return;
     
     let btn = this;
     btn.disabled = true;
@@ -979,19 +1255,39 @@ document.getElementById('deleteEmailBtn').addEventListener('click', function() {
                 allEmails = allEmails.filter(m => m.id !== currentEmailId);
                 document.getElementById('inboxBadge').innerText = allEmails.length;
                 document.getElementById('unreadBadge').innerText = allEmails.filter(m => m.isUnread).length;
-                document.getElementById('closeReadEmail').click();
+                closeEmailReader();
+                showGmailToast('Message deleted.', 'success', 4000);
             } else {
-                alert('Failed to delete email: ' + (data.error || 'Unknown error'));
+                showGmailToast('Failed to delete: ' + (data.error || 'Unknown error'), 'error', 0);
             }
         })
         .catch(err => {
             btn.disabled = false;
             btn.innerHTML = '<i class="ri-delete-bin-line fs-18"></i>';
-            alert('Network error while deleting.');
+            showGmailToast('Network error while deleting.', 'error', 5000);
         });
 });
 
-// Boot application
+// Mark as unread from reader
+document.getElementById('markUnreadBtn').addEventListener('click', function() {
+    if (!currentEmailId) return;
+    
+    fetch('email.php?action=mark_unread&id=' + currentEmailId)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                let cached = allEmails.find(e => e.id == currentEmailId);
+                if (cached) cached.isUnread = 1;
+                document.getElementById('unreadBadge').innerText = allEmails.filter(m => m.isUnread).length;
+                closeEmailReader();
+                showGmailToast('Marked as unread.', 'success', 3000);
+            }
+        });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', loadInbox);
 </script>
 
