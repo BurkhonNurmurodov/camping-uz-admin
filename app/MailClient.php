@@ -22,6 +22,8 @@ class MailClient {
     private ?string $sentFolderCache = null;
     private ?string $lastTransport = null;
     private bool $allowSendmailFallback = false;
+    /** @var array<string, Mailbox> folder name => open mailbox, for this request only */
+    private array $folderMailboxes = [];
 
     /**
      * Hard caps for the SMTP conversation. PHPMailer's $Timeout only bounds the
@@ -96,6 +98,31 @@ class MailClient {
             }
         }
         return $this->mailbox;
+    }
+
+    /**
+     * A Mailbox for an arbitrary folder, reused for the rest of the request.
+     *
+     * Each `new Mailbox` opens a fresh authenticated IMAP session. Rendering one page
+     * used to open several, and that churn is what tripped the mail server's fail2ban
+     * dovecot jail — which bans the whole source IP, taking SMTP down with it.
+     */
+    private function folderMailbox(string $folder): Mailbox {
+        $folder = $folder === '' ? 'INBOX' : $folder;
+        if (strcasecmp($folder, 'INBOX') === 0) {
+            return $this->requireMailbox();
+        }
+        if (isset($this->folderMailboxes[$folder])) {
+            return $this->folderMailboxes[$folder];
+        }
+        $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
+        $serverPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}';
+        return $this->folderMailboxes[$folder] = new Mailbox(
+            $serverPath . $folder,
+            $this->login,
+            $this->password,
+            (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null
+        );
     }
 
     /**
@@ -197,17 +224,7 @@ class MailClient {
 
     public function getSentMessages($page = 1, $perPage = 20) {
         try {
-            $sentFolder = $this->detectSentFolder();
-            $serverPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}';
-            $sentPath = $serverPath . $sentFolder;
-
-            $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
-            $sentMailbox = new Mailbox(
-                $sentPath,
-                $this->login,
-                $this->password,
-                (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null
-            );
+            $sentMailbox = $this->folderMailbox($this->detectSentFolder());
 
             $mailsIds = $sentMailbox->searchMailbox('ALL');
             if (!$mailsIds) {
@@ -251,16 +268,8 @@ class MailClient {
     public function getMessage($id, $folder = 'INBOX') {
         try {
             if ($folder !== 'INBOX') {
-                // Open a different folder for reading
-                $serverPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}';
-                $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
-                $folderMailbox = new Mailbox(
-                    $serverPath . $folder,
-                    $this->login,
-                    $this->password,
-                    (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null
-                );
-                $mail = $folderMailbox->getMail($id);
+                // Open a different folder for reading (reused if already open)
+                $mail = $this->folderMailbox($folder)->getMail($id);
             } else {
                 $mailbox = $this->requireMailbox();
                 $mail = $mailbox->getMail($id);
@@ -409,6 +418,12 @@ class MailClient {
                 }
 
                 // From
+                // EHLO name. Left unset, PHPMailer falls back to $_SERVER['SERVER_NAME']
+                // or "localhost.localdomain" — and the mail server enforces
+                // reject_invalid_helo_hostname / reject_non_fqdn_helo_hostname, so an
+                // unqualified greeting gets the message refused.
+                $mail->Hostname = $this->heloHostname();
+
                 $mail->setFrom($fromEmail, 'Silk Naviora');
                 $mail->Sender = $fromEmail;
 
@@ -499,6 +514,24 @@ class MailClient {
         $smtp = $mail->getSMTPInstance(); // smtpConnect() reuses this instance
         $smtp->Timeout   = $connect;
         $smtp->Timelimit = (int) max(4, min(self::SMTP_READ_TIMELIMIT, floor($remainingBudget)));
+    }
+
+    /**
+     * A fully-qualified name to greet the mail server with. Prefers the domain of the
+     * mailbox we authenticate as, since that is the name the server's certificate and
+     * SPF record are built around.
+     */
+    private function heloHostname(): string {
+        $domain = substr(strrchr($this->login, '@') ?: '@', 1);
+        if ($domain !== '' && strpos($domain, '.') !== false) {
+            return 'mail.' . $domain;
+        }
+        if (!in_array(strtolower(trim($this->smtpHost)), ['127.0.0.1', 'localhost', '::1', ''], true)
+            && strpos($this->smtpHost, '.') !== false
+            && !filter_var($this->smtpHost, FILTER_VALIDATE_IP)) {
+            return $this->smtpHost;
+        }
+        return 'mail.silknaviora.com';
     }
 
     /**
