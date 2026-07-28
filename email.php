@@ -47,15 +47,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
         || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false);
 
+    // Release the session lock before the SMTP/IMAP conversation. PHP's file session
+    // handler holds an exclusive lock for the whole request, so without this every
+    // other admin request — including ones in a brand new tab — blocks until the send
+    // finishes. That is why the panel froze for as long as the spinner ran.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+    ignore_user_abort(true);
+    @set_time_limit(90);
+
     try {
         if ($mailClient->sendMessage($to, $subject, $body, $cc, $bcc, $attachments)) {
+            $transport = $mailClient->getLastTransport();
+            // The mail server has *accepted* the message; it has not necessarily been
+            // delivered yet. Say what actually happened rather than "sent successfully".
+            $note = 'Message accepted by the mail server and queued for delivery.';
             if ($isAjax) {
                 while (ob_get_level()) { ob_end_clean(); }
                 header('Content-Type: application/json');
-                echo json_encode(['success' => true, 'message' => 'Message sent successfully!']);
+                echo json_encode([
+                    'success'   => true,
+                    'message'   => $note,
+                    'transport' => $transport,
+                ]);
                 exit;
             }
-            flash('success', 'Email sent successfully.');
+            if (session_status() !== PHP_SESSION_ACTIVE) { @session_start(); }
+            flash('success', $note);
         }
     } catch (\Throwable $e) {
         if ($isAjax) {
@@ -64,6 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
             exit;
         }
+        session_start();
         flash('error', 'Failed to send email: ' . $e->getMessage());
     }
     redirect('email.php');
@@ -854,7 +874,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (submitBtn) submitBtn.disabled = false;
                 if (data.success) {
                     form.reset();
-                    showGmailToast(data.message || 'Message sent successfully!', 'success', 6000);
+                    let msg = data.message || 'Message queued for delivery.';
+                    if (data.transport) msg += ' (via ' + data.transport + ')';
+                    showGmailToast(msg, 'success', 8000);
                 } else {
                     showGmailToast('Failed to send: ' + (data.error || 'Server error'), 'error', 0);
                     modalInstance.show();

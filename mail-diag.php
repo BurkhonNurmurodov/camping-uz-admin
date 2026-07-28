@@ -133,4 +133,129 @@ if (!extension_loaded('imap')) {
     imap_alerts();
 }
 
+echo "\n--- Local SMTP transports (what the webmail actually sends through) ---\n";
+// Mirrors MailClient::buildSendStrategies(). Each probe is timed: a transport that
+// connects but never answers is what makes the compose spinner run for minutes.
+function smtp_probe(string $host, int $port, int $timeout = 5): array {
+    $scheme = ($port === 465 ? 'ssl://' : 'tcp://');
+    $ctx = stream_context_create(['ssl' => [
+        'verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true,
+    ]]);
+    $t0 = microtime(true);
+    $errno = 0; $errstr = '';
+    $fp = @stream_socket_client($scheme . $host . ':' . $port, $errno, $errstr, $timeout, STREAM_CLIENT_CONNECT, $ctx);
+    $connectMs = (int) round((microtime(true) - $t0) * 1000);
+    if (!$fp) {
+        return ['ok' => false, 'connect_ms' => $connectMs, 'error' => trim("$errstr (errno $errno)"), 'banner' => '', 'ehlo' => []];
+    }
+    stream_set_timeout($fp, $timeout);
+    $banner = (string) @fgets($fp, 1024);
+    $bannerMs = (int) round((microtime(true) - $t0) * 1000);
+    $ehlo = [];
+    if ($banner !== '') {
+        @fwrite($fp, "EHLO diag.localhost\r\n");
+        while (($line = @fgets($fp, 1024)) !== false) {
+            $ehlo[] = rtrim($line, "\r\n");
+            if (!isset($line[3]) || $line[3] === ' ') { break; }
+            $meta = stream_get_meta_data($fp);
+            if ($meta['timed_out']) { break; }
+        }
+    }
+    @fwrite($fp, "QUIT\r\n");
+    @fclose($fp);
+    return [
+        'ok' => true, 'connect_ms' => $connectMs, 'banner_ms' => $bannerMs,
+        'error' => '', 'banner' => rtrim($banner, "\r\n"), 'ehlo' => $ehlo,
+    ];
+}
+
+$localPorts = array_values(array_unique(array_filter([$smtpPort, 587, 25])));
+foreach ($localPorts as $port) {
+    $r = smtp_probe('127.0.0.1', (int) $port);
+    if (!$r['ok']) {
+        check("127.0.0.1:$port", false, $r['error'] . " after {$r['connect_ms']}ms");
+        continue;
+    }
+    if ($r['banner'] === '') {
+        check("127.0.0.1:$port", false, "connected in {$r['connect_ms']}ms but sent NO banner — this transport hangs the send");
+        continue;
+    }
+    $auth = false;
+    foreach ($r['ehlo'] as $l) { if (stripos($l, 'AUTH') !== false) { $auth = true; } }
+    check("127.0.0.1:$port", true, "banner in {$r['banner_ms']}ms — " . $r['banner'] . ($auth ? ' [AUTH offered]' : ' [no AUTH before STARTTLS]'));
+}
+check('Sendmail binary present', file_exists('/usr/sbin/sendmail') || file_exists('/usr/lib/sendmail'));
+
+echo "\n--- Outbound delivery (why a queued message may never arrive) ---\n";
+// Everything above only proves the message reached the local queue. These checks are
+// about whether the local MTA can then hand it to the recipient's server.
+$publicIp = gethostbyname($smtpHost);
+line('Public IP of ' . $smtpHost, $publicIp === $smtpHost ? '!! could not resolve' : $publicIp);
+
+if (filter_var($publicIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+    $ptr = @gethostbyaddr($publicIp);
+    $hasPtr = ($ptr && $ptr !== $publicIp);
+    check('Reverse DNS (PTR) for ' . $publicIp, $hasPtr, $hasPtr
+        ? $ptr
+        : 'NO PTR RECORD — Gmail/Outlook reject mail from IPs without one (550-5.7.25). Ask the hosting provider to set the PTR to ' . $smtpHost);
+    if ($hasPtr) {
+        $fwd = gethostbyname($ptr);
+        check('PTR resolves back to the same IP', $fwd === $publicIp, "$ptr -> $fwd");
+    }
+}
+
+foreach (['gmail-smtp-in.l.google.com', 'alt1.gmail-smtp-in.l.google.com'] as $mx) {
+    $t0 = microtime(true);
+    $errno = 0; $errstr = '';
+    $fp = @fsockopen('tcp://' . $mx, 25, $errno, $errstr, 8);
+    $ms = (int) round((microtime(true) - $t0) * 1000);
+    if ($fp) {
+        stream_set_timeout($fp, 8);
+        $banner = rtrim((string) @fgets($fp, 1024), "\r\n");
+        @fclose($fp);
+        check("Outbound port 25 -> $mx", $banner !== '', $banner !== ''
+            ? "{$ms}ms — $banner"
+            : "connected in {$ms}ms but no banner (traffic is being filtered)");
+    } else {
+        check("Outbound port 25 -> $mx", false, trim("$errstr (errno $errno)") . " after {$ms}ms — the host or provider is blocking outbound SMTP, so queued mail can never leave this server");
+    }
+}
+
+echo "\n--- Local mail queue & log ---\n";
+$disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+$canShell = function_exists('shell_exec') && !in_array('shell_exec', $disabled, true);
+if (!$canShell) {
+    echo "shell_exec() is disabled — run these on the server over SSH instead:\n";
+    echo "  mailq | tail -40                       # messages stuck in the queue\n";
+    echo "  postqueue -p | tail -40\n";
+    echo "  tail -100 /var/log/mail.log            # or /var/log/maillog\n";
+} else {
+    $mailq = @shell_exec('mailq 2>&1 | tail -40');
+    echo "\$ mailq | tail -40\n" . (trim((string) $mailq) === '' ? "(no output)\n" : $mailq . "\n");
+
+    $logFile = null;
+    foreach (['/var/log/mail.log', '/var/log/maillog', '/var/log/mail.err'] as $candidate) {
+        if (is_readable($candidate)) { $logFile = $candidate; break; }
+    }
+    if ($logFile) {
+        echo "\n\$ tail -60 $logFile\n" . (string) @shell_exec('tail -60 ' . escapeshellarg($logFile) . ' 2>&1') . "\n";
+    } else {
+        echo "\nNo readable mail log found (tried /var/log/mail.log, /var/log/maillog, /var/log/mail.err).\n";
+        echo "Try: journalctl -u postfix -n 100 --no-pager\n";
+    }
+}
+
+echo "\n--- Sender reputation records for " . ($domain = substr(strrchr($login, '@') ?: '@', 1)) . " ---\n";
+$txt = @dns_get_record($domain, DNS_TXT) ?: [];
+$spf = '';
+foreach ($txt as $rec) {
+    $val = $rec['txt'] ?? '';
+    if (stripos($val, 'v=spf1') === 0) { $spf = $val; }
+}
+check('SPF record published', $spf !== '', $spf ?: 'missing — receiving servers cannot verify this server may send for ' . $domain);
+$dmarc = @dns_get_record('_dmarc.' . $domain, DNS_TXT) ?: [];
+check('DMARC record published', !empty($dmarc), !empty($dmarc) ? ($dmarc[0]['txt'] ?? '') : 'missing');
+$dkim = @dns_get_record('default._domainkey.' . $domain, DNS_TXT) ?: [];
+check('DKIM key at default._domainkey', !empty($dkim), !empty($dkim) ? 'published' : 'not at the "default" selector (may use another selector)');
+
 echo "\n=== End of report — delete this file from the server when done ===\n";

@@ -19,6 +19,18 @@ class MailClient {
     private $smtpHost;
     private $smtpPort;
     private ?string $connectionError = null;
+    private ?string $sentFolderCache = null;
+    private ?string $lastTransport = null;
+
+    /**
+     * Hard caps for the SMTP conversation. PHPMailer's $Timeout only bounds the
+     * *connect* call — every read is bounded by SMTP::$Timelimit, which defaults
+     * to 300s (600s during DATA). A host that accepts the TCP connection but never
+     * replies therefore stalls the request for minutes. See setSmtpTimeouts().
+     */
+    private const SMTP_CONNECT_TIMEOUT = 5;   // seconds, per connect attempt
+    private const SMTP_READ_TIMELIMIT  = 10;  // seconds, per server reply (x2 during DATA)
+    private const SEND_TIME_BUDGET     = 40;  // seconds, total across all strategies
 
     public function __construct() {
         $this->imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
@@ -97,6 +109,13 @@ class MailClient {
      * Different servers use: Sent, "Sent Messages", "Sent Items", "INBOX.Sent", etc.
      */
     public function detectSentFolder(): string {
+        if ($this->sentFolderCache !== null) {
+            return $this->sentFolderCache;
+        }
+        return $this->sentFolderCache = $this->discoverSentFolder();
+    }
+
+    private function discoverSentFolder(): string {
         try {
             $stream = $this->getImapStream();
             $serverPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}';
@@ -330,58 +349,29 @@ class MailClient {
      * @return bool
      */
     public function sendMessage($to, $subject, $body, $cc = '', $bcc = '', $attachments = []) {
+        $this->lastTransport = null;
+
+        $to = trim((string) $to);
+        if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+            // Validate before the strategy loop — otherwise an unusable address is
+            // retried against every transport and reported as a connection failure.
+            throw new \InvalidArgumentException('"' . $to . '" is not a valid recipient address.');
+        }
+
         $fromEmail = filter_var($this->login, FILTER_VALIDATE_EMAIL) ? $this->login : 'info@silknaviora.com';
         $hasAuth = !empty($this->login) && !empty($this->password);
-        
-        // Build strategy list: localhost first (avoids hairpin NAT), then configured host, then fallbacks
-        $strategies = [];
 
-        // Strategy 1: Localhost SMTP with authentication (same machine = fastest path)
-        $strategies[] = [
-            'name'   => "Localhost SMTP (localhost:{$this->smtpPort})",
-            'type'   => 'smtp',
-            'host'   => 'localhost',
-            'port'   => $this->smtpPort,
-            'auth'   => $hasAuth,
-            'secure' => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ''),
-            'autotls' => ($this->smtpPort === 587), // Try STARTTLS if 587, but don't force it
-        ];
-
-        // Strategy 2: Configured SMTP host (for external mail servers)
-        if (!in_array(strtolower(trim($this->smtpHost)), ['127.0.0.1', 'localhost', '::1'], true)) {
-            $strategies[] = [
-                'name'   => "SMTP ({$this->smtpHost}:{$this->smtpPort})",
-                'type'   => 'smtp',
-                'host'   => $this->smtpHost,
-                'port'   => $this->smtpPort,
-                'auth'   => $hasAuth,
-                'secure' => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ($this->smtpPort === 587 ? PHPMailer::ENCRYPTION_STARTTLS : '')),
-                'autotls' => true,
-            ];
-        }
-
-        // Strategy 3: Localhost port 25 unauthenticated relay (standard Postfix local delivery)
-        if ($this->smtpPort !== 25) {
-            $strategies[] = [
-                'name'   => "Localhost Relay (localhost:25)",
-                'type'   => 'smtp',
-                'host'   => 'localhost',
-                'port'   => 25,
-                'auth'   => false,
-                'secure' => '',
-                'autotls' => false,
-            ];
-        }
-
-        // Strategy 4: Sendmail binary (bypasses all network)
-        $strategies[] = [
-            'name' => "Sendmail (/usr/sbin/sendmail)",
-            'type' => 'sendmail'
-        ];
-
-        $errors = [];
+        $strategies = $this->buildSendStrategies($hasAuth);
+        $errors  = [];
+        $started = microtime(true);
 
         foreach ($strategies as $strat) {
+            $remaining = self::SEND_TIME_BUDGET - (microtime(true) - $started);
+            if ($remaining < self::SMTP_CONNECT_TIMEOUT) {
+                $errors[] = "{$strat['name']} -> skipped (send time budget of " . self::SEND_TIME_BUDGET . "s exhausted)";
+                continue;
+            }
+
             $mail = new PHPMailer(true);
             ob_start();
             try {
@@ -396,7 +386,6 @@ class MailClient {
                     }
                     $mail->SMTPSecure  = $strat['secure'];
                     $mail->SMTPAutoTLS = $strat['autotls'];
-                    $mail->Timeout     = 5; // Fast fail so next strategy can try
                     $mail->SMTPOptions = [
                         'ssl' => [
                             'verify_peer'       => false,
@@ -404,6 +393,7 @@ class MailClient {
                             'allow_self_signed' => true,
                         ],
                     ];
+                    $this->setSmtpTimeouts($mail, $remaining);
                 } elseif ($strat['type'] === 'sendmail') {
                     if (!file_exists('/usr/sbin/sendmail') && !file_exists('/usr/lib/sendmail')) {
                         ob_end_clean();
@@ -418,7 +408,7 @@ class MailClient {
                 $mail->Sender = $fromEmail;
 
                 // To
-                $mail->addAddress(trim($to));
+                $mail->addAddress($to);
 
                 // CC
                 if (!empty($cc)) {
@@ -445,7 +435,7 @@ class MailClient {
                         $name = is_array($attachments['name']) ? $attachments['name'][$i] : $attachments['name'];
                         $tmpName = is_array($attachments['tmp_name']) ? $attachments['tmp_name'][$i] : $attachments['tmp_name'];
                         $error = is_array($attachments['error']) ? $attachments['error'][$i] : $attachments['error'];
-                        
+
                         if ($error === UPLOAD_ERR_OK && !empty($tmpName) && is_uploaded_file($tmpName)) {
                             $mail->addAttachment($tmpName, $name);
                         }
@@ -461,9 +451,12 @@ class MailClient {
 
                 $mail->send();
                 while (ob_get_level()) { ob_end_clean(); }
-                error_log("Email sent successfully via: " . $strat['name']);
 
-                // Save a copy to the Sent folder (non-blocking, non-critical)
+                $this->lastTransport = $strat['name'];
+                $elapsed = round(microtime(true) - $started, 2);
+                error_log("Mail accepted for delivery via [{$strat['name']}] in {$elapsed}s (to: {$to})");
+
+                // Save a copy to the Sent folder (non-critical — never fail the send for this)
                 $this->saveSentCopy($mail);
 
                 return true;
@@ -476,6 +469,89 @@ class MailClient {
         }
 
         throw new \RuntimeException("Failed to send email:\n" . implode("\n", array_unique($errors)));
+    }
+
+    /**
+     * Name of the transport that accepted the last message ("Localhost submission
+     * (localhost:587)", "Sendmail", ...). Null when nothing has been sent yet.
+     */
+    public function getLastTransport(): ?string {
+        return $this->lastTransport;
+    }
+
+    /**
+     * PHPMailer's $Timeout only bounds the connect() call. Every *reply* read is
+     * bounded by SMTP::$Timelimit, which PHPMailer leaves at 300s (and doubles to
+     * 600s while sending DATA). A host that completes the TCP handshake but never
+     * sends a banner — the classic hairpin-NAT / dropped-packet case when the
+     * server dials its own public IP — therefore blocks the whole HTTP request for
+     * minutes. Pin both values so a dead transport fails in seconds.
+     */
+    private function setSmtpTimeouts(PHPMailer $mail, float $remainingBudget): void {
+        $connect = (int) max(2, min(self::SMTP_CONNECT_TIMEOUT, floor($remainingBudget)));
+        $mail->Timeout = $connect;
+
+        $smtp = $mail->getSMTPInstance(); // smtpConnect() reuses this instance
+        $smtp->Timeout   = $connect;
+        $smtp->Timelimit = (int) max(4, min(self::SMTP_READ_TIMELIMIT, floor($remainingBudget)));
+    }
+
+    /**
+     * Ordered list of delivery transports.
+     *
+     * Local transports come first and the configured public hostname comes last:
+     * from the server itself, mail.silknaviora.com resolves back to the server's own
+     * public IP, and if the network does not hairpin, that connection hangs instead
+     * of failing. It is the slowest possible path to the same Postfix instance, so
+     * it is only worth trying once everything local has failed.
+     */
+    private function buildSendStrategies(bool $hasAuth): array {
+        $strategies = [];
+        $seen = [];
+
+        $addLocal = function (int $port, bool $auth) use (&$strategies, &$seen, $hasAuth) {
+            if ($port < 1 || isset($seen[$port])) {
+                return;
+            }
+            $seen[$port] = true;
+            $auth = $auth && $hasAuth;
+            $strategies[] = [
+                'name'    => ($auth ? "Localhost submission (localhost:{$port})" : "Localhost relay (localhost:{$port})"),
+                'type'    => 'smtp',
+                'host'    => '127.0.0.1', // not "localhost": that may resolve to ::1 on an IPv4-only listener
+                'port'    => $port,
+                'auth'    => $auth,
+                'secure'  => ($port === 465 ? PHPMailer::ENCRYPTION_SMTPS : ''),
+                'autotls' => ($port !== 465),
+            ];
+        };
+
+        // 1. Configured port on the local machine, then the standard submission port,
+        //    then the unauthenticated local relay Postfix accepts from mynetworks.
+        $addLocal($this->smtpPort, true);
+        $addLocal(587, true);
+        $addLocal(25, false);
+
+        // 2. The sendmail binary — no network at all, hands straight to the local queue.
+        $strategies[] = [
+            'name' => 'Sendmail (/usr/sbin/sendmail)',
+            'type' => 'sendmail',
+        ];
+
+        // 3. Last resort: the configured public SMTP host.
+        if (!in_array(strtolower(trim($this->smtpHost)), ['127.0.0.1', 'localhost', '::1', ''], true)) {
+            $strategies[] = [
+                'name'    => "SMTP ({$this->smtpHost}:{$this->smtpPort})",
+                'type'    => 'smtp',
+                'host'    => $this->smtpHost,
+                'port'    => $this->smtpPort,
+                'auth'    => $hasAuth,
+                'secure'  => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ($this->smtpPort === 587 ? PHPMailer::ENCRYPTION_STARTTLS : '')),
+                'autotls' => true,
+            ];
+        }
+
+        return $strategies;
     }
 
     // ─── Save Sent Copy ──────────────────────────────────────────────
