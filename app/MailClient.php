@@ -43,44 +43,38 @@ class MailClient {
         $this->smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
         // 587/STARTTLS by default: port 465 is closed on mail.silknaviora.com.
         $this->smtpPort = (int) setting('mail_smtp_port', getenv('SMTP_PORT') ?: 587);
-
-        // Try to connect to IMAP
-        try {
-            if (function_exists('imap_timeout')) {
-                imap_timeout(IMAP_OPENTIMEOUT, 5);
-                imap_timeout(IMAP_READTIMEOUT, 10);
-                imap_timeout(IMAP_WRITETIMEOUT, 10);
-            }
-            if (!class_exists(Mailbox::class)) {
-                throw new \RuntimeException('The php-imap library is not installed on this server: vendor/php-imap is missing or the Composer autoloader is stale. Re-upload the whole vendor/ folder or run "composer install" on the server.');
-            }
-            if (!\extension_loaded('imap')) {
-                throw new \RuntimeException('The PHP "imap" extension is not enabled on this server. Install it (e.g. "sudo apt install php-imap" on Ubuntu, then restart Apache/PHP-FPM).');
-            }
-            $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
-            if (!is_dir($attachmentsDir)) {
-                @mkdir($attachmentsDir, 0777, true);
-            }
-            @chmod($attachmentsDir, 0777);
-            $this->mailbox = new Mailbox(
-                $this->imapPath,
-                $this->login,
-                $this->password,
-                (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null // check is_writable so read-only folders don't break IMAP parsing
-            );
-            $this->mailbox->setConnectionArgs(CL_EXPUNGE);
-        } catch (\Throwable $e) {
-            $this->connectionError = $e->getMessage();
-        }
     }
 
     private function requireMailbox(): Mailbox {
         if (!$this->mailbox instanceof Mailbox) {
-            $message = 'IMAP mailbox is unavailable. Check the mail server settings and credentials.';
-            if ($this->connectionError) {
-                $message .= ' Details: ' . $this->connectionError;
+            try {
+                if (function_exists('imap_timeout')) {
+                    imap_timeout(IMAP_OPENTIMEOUT, 5);
+                    imap_timeout(IMAP_READTIMEOUT, 10);
+                    imap_timeout(IMAP_WRITETIMEOUT, 10);
+                }
+                if (!class_exists(Mailbox::class)) {
+                    throw new \RuntimeException('The php-imap library is not installed on this server: vendor/php-imap is missing or the Composer autoloader is stale. Re-upload the whole vendor/ folder or run "composer install" on the server.');
+                }
+                if (!\extension_loaded('imap')) {
+                    throw new \RuntimeException('The PHP "imap" extension is not enabled on this server. Install it (e.g. "sudo apt install php-imap" on Ubuntu, then restart Apache/PHP-FPM).');
+                }
+                $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
+                if (!is_dir($attachmentsDir)) {
+                    @mkdir($attachmentsDir, 0777, true);
+                }
+                @chmod($attachmentsDir, 0777);
+                $this->mailbox = new Mailbox(
+                    $this->imapPath,
+                    $this->login,
+                    $this->password,
+                    (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null
+                );
+                $this->mailbox->setConnectionArgs(CL_EXPUNGE);
+            } catch (\Throwable $e) {
+                $this->connectionError = $e->getMessage();
+                throw new \RuntimeException('IMAP mailbox is unavailable. Check credentials and settings. Details: ' . $this->connectionError, 0, $e);
             }
-            throw new \RuntimeException($message);
         }
 
         return $this->mailbox;
@@ -243,8 +237,10 @@ class MailClient {
         ];
 
         $errors = [];
+        $fromEmail = filter_var($this->login, FILTER_VALIDATE_EMAIL) ? $this->login : 'info@silknaviora.com';
         foreach ($strategies as $strat) {
             $mail = new PHPMailer(true);
+            ob_start();
             try {
                 if ($strat['type'] === 'smtp') {
                     $mail->isSMTP();
@@ -267,6 +263,7 @@ class MailClient {
                     ];
                 } elseif ($strat['type'] === 'sendmail') {
                     if (!file_exists('/usr/sbin/sendmail') && !file_exists('/usr/lib/sendmail')) {
+                        ob_end_clean();
                         continue;
                     }
                     $mail->isSendmail();
@@ -274,7 +271,8 @@ class MailClient {
                     $mail->isMail();
                 }
 
-                $mail->setFrom($this->login, 'Silk Naviora');
+                $mail->setFrom($fromEmail, 'Silk Naviora');
+                $mail->Sender = $fromEmail;
                 $mail->addAddress($to);
 
                 $mail->isHTML(true);
@@ -283,9 +281,11 @@ class MailClient {
                 $mail->AltBody = strip_tags($body);
 
                 $mail->send();
+                while (ob_get_level()) { ob_end_clean(); }
                 error_log("Successfully sent email using strategy: " . $strat['name']);
                 return true;
             } catch (\Throwable $e) {
+                while (ob_get_level()) { ob_end_clean(); }
                 $err = $mail->ErrorInfo ?: $e->getMessage();
                 error_log("Strategy [{$strat['name']}] failed: {$err}");
                 $errors[] = "{$strat['name']} -> {$err}";
