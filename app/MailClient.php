@@ -20,7 +20,8 @@ class MailClient {
     public function __construct() {
         // Fallback host per the domain's MX record — silknaviora.uz has no DNS records.
         $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
-        $this->imapPath = '{' . $imapHost . ':993/imap/ssl}INBOX';
+        // Use /novalidate-cert to prevent hostname mismatch errors when connecting via 127.0.0.1 or localhost
+        $this->imapPath = '{' . $imapHost . ':993/imap/ssl/novalidate-cert}INBOX';
         $this->login = (string) setting('mail_username', getenv('MAIL_USER') ?: 'info@silknaviora.com');
         $this->password = (string) setting('mail_password', getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE');
         $this->smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
@@ -138,6 +139,15 @@ class MailClient {
                 ? PHPMailer::ENCRYPTION_SMTPS
                 : PHPMailer::ENCRYPTION_STARTTLS;
             $mail->Port       = $this->smtpPort;
+
+            // Prevent SSL hostname mismatch errors when connecting to 127.0.0.1 or local mail servers
+            $mail->SMTPOptions = [
+                'ssl' => [
+                    'verify_peer'       => false,
+                    'verify_peer_name'  => false,
+                    'allow_self_signed' => true,
+                ],
+            ];
 
             // Recipients
             $mail->setFrom($this->login, 'Silk Naviora');
