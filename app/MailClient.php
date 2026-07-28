@@ -21,6 +21,7 @@ class MailClient {
     private ?string $connectionError = null;
     private ?string $sentFolderCache = null;
     private ?string $lastTransport = null;
+    private bool $allowSendmailFallback = false;
 
     /**
      * Hard caps for the SMTP conversation. PHPMailer's $Timeout only bounds the
@@ -55,6 +56,10 @@ class MailClient {
         $this->password = (string) setting('mail_password', getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE');
         $this->smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
         $this->smtpPort = (int) setting('mail_smtp_port', getenv('SMTP_PORT') ?: 587);
+        $this->allowSendmailFallback = filter_var(
+            setting('mail_allow_sendmail_fallback', getenv('MAIL_ALLOW_SENDMAIL') ?: '0'),
+            FILTER_VALIDATE_BOOLEAN
+        );
     }
 
     // ─── IMAP Connection (Lazy-loaded) ───────────────────────────────
@@ -586,14 +591,19 @@ class MailClient {
             ];
         }
 
-        // 3. Sendmail LAST. It hands the message to the local queue and reports success
-        //    as soon as the binary exits 0 — it cannot fail in a way we can detect, so
-        //    placing it earlier would shadow every real SMTP transport behind it and
-        //    turn an undeliverable message into a "sent successfully".
-        $strategies[] = [
-            'name' => 'Sendmail (/usr/sbin/sendmail)',
-            'type' => 'sendmail',
-        ];
+        // 3. Sendmail, opt-in only, and always last.
+        //    It hands the message to the LOCAL queue and reports success the moment the
+        //    binary exits 0 — there is no acknowledgement to check. On a host where the
+        //    local MTA is stopped (mail actually served from a container, say) that is a
+        //    black hole: messages pile up unseen in /var/spool/postfix/maildrop while the
+        //    UI reports "sent". A visible failure is worth more than a fake success, so
+        //    this is only used when someone deliberately enables it.
+        if ($this->allowSendmailFallback) {
+            $strategies[] = [
+                'name' => 'Sendmail (/usr/sbin/sendmail)',
+                'type' => 'sendmail',
+            ];
+        }
 
         return $strategies;
     }
