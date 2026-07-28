@@ -44,7 +44,7 @@ class MailClient {
                 $this->imapPath,
                 $this->login,
                 $this->password,
-                is_dir($attachmentsDir) ? $attachmentsDir : null // attachments dir is optional; null keeps IMAP working if it can't be created
+                (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null // check is_writable so read-only folders don't break IMAP parsing
             );
             $this->mailbox->setConnectionArgs(CL_EXPUNGE);
         } catch (\Throwable $e) {
