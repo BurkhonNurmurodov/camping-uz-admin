@@ -3,6 +3,23 @@ php_value post_max_size 256M
 php_value max_execution_time 300
 php_value max_input_time 300
 
-RewriteEngine On
+Options -Indexes -MultiViews
 
-RewriteRule ^email/?$ email.php [L,QSA]
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Parameter routes
+    RewriteRule ^tour-edit/([0-9]+)$ tour-edit.php?id=$1 [L,QSA]
+    RewriteRule ^guide-edit/([0-9]+)$ guide-edit.php?id=$1 [L,QSA]
+    RewriteRule ^testimonial-edit/([0-9]+)$ testimonial-edit.php?id=$1 [L,QSA]
+    RewriteRule ^email/?$ email.php [L,QSA]
+
+    # Map extensionless URLs to .php files
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME}\.php -f [OR]
+    RewriteCond %{DOCUMENT_ROOT}/$1\.php -f [OR]
+    RewriteCond %{DOCUMENT_ROOT}%{REQUEST_URI}\.php -f
+    RewriteRule ^(.*?)/?$ $1.php [L,QSA]
+</IfModule>
