@@ -1,6 +1,9 @@
 <?php
 // Admin-specific bootstrap
 
+// Load the admin project's Composer autoloader before any app classes are initialized.
+require_once __DIR__ . '/../vendor/autoload.php';
+
 // Define the URL where uploaded files are served from the main site.
 // On production, this should be the absolute URL to your main site's uploads folder.
 if (!defined('UPLOAD_URL')) {

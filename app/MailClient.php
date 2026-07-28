@@ -18,23 +18,32 @@ class MailClient {
     private ?string $connectionError = null;
 
     public function __construct() {
-        $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.uz');
+        // Fallback host per the domain's MX record — silknaviora.uz has no DNS records.
+        $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
         $this->imapPath = '{' . $imapHost . ':993/imap/ssl}INBOX';
-        $this->login = (string) setting('mail_username', getenv('MAIL_USER') ?: 'info@silknaviora.uz');
+        $this->login = (string) setting('mail_username', getenv('MAIL_USER') ?: 'info@silknaviora.com');
         $this->password = (string) setting('mail_password', getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE');
-        $this->smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.uz');
-        $this->smtpPort = (int) setting('mail_smtp_port', getenv('SMTP_PORT') ?: 465);
+        $this->smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
+        // 587/STARTTLS by default: port 465 is closed on mail.silknaviora.com.
+        $this->smtpPort = (int) setting('mail_smtp_port', getenv('SMTP_PORT') ?: 587);
 
         // Try to connect to IMAP
         try {
+            if (!class_exists(Mailbox::class)) {
+                throw new \RuntimeException('The php-imap library is not installed on this server: vendor/php-imap is missing or the Composer autoloader is stale. Re-upload the whole vendor/ folder or run "composer install" on the server.');
+            }
+            if (!\extension_loaded('imap')) {
+                throw new \RuntimeException('The PHP "imap" extension is not enabled on this server. Install it (e.g. "sudo apt install php-imap" on Ubuntu, then restart Apache/PHP-FPM).');
+            }
+            $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
+            if (!is_dir($attachmentsDir)) {
+                @mkdir($attachmentsDir, 0775, true);
+            }
             $this->mailbox = new Mailbox(
-                $this->imapPath, 
-                $this->login, 
+                $this->imapPath,
+                $this->login,
                 $this->password,
-                __DIR__ . '/../assets/mail_attachments', // Directory for attachments
-                'UTF-8',
-                true, // Auto-trim
-                false // Ignore self-signed certs (set to true if needed)
+                is_dir($attachmentsDir) ? $attachmentsDir : null // attachments dir is optional; null keeps IMAP working if it can't be created
             );
             $this->mailbox->setConnectionArgs(CL_EXPUNGE);
         } catch (\Throwable $e) {
@@ -125,7 +134,9 @@ class MailClient {
             $mail->SMTPAuth   = true;
             $mail->Username   = $this->login;
             $mail->Password   = $this->password;
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS; // or ENCRYPTION_STARTTLS
+            $mail->SMTPSecure = $this->smtpPort === 465
+                ? PHPMailer::ENCRYPTION_SMTPS
+                : PHPMailer::ENCRYPTION_STARTTLS;
             $mail->Port       = $this->smtpPort;
 
             // Recipients
