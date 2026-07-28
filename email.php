@@ -22,6 +22,9 @@ if (isset($_GET['action'])) {
         } elseif ($_GET['action'] === 'message' && isset($_GET['id'])) {
             $folder = $_GET['folder'] ?? 'INBOX';
             echo json_encode($mailClient->getMessage($_GET['id'], $folder));
+        } elseif ($_GET['action'] === 'thread' && isset($_GET['id'])) {
+            $folder = $_GET['folder'] ?? 'INBOX';
+            echo json_encode($mailClient->getThread($_GET['id'], $folder));
         } elseif ($_GET['action'] === 'delete' && isset($_GET['id'])) {
             echo json_encode(['success' => $mailClient->deleteMessage($_GET['id'])]);
         } elseif ($_GET['action'] === 'mark_unread' && isset($_GET['id'])) {
@@ -154,6 +157,59 @@ require __DIR__ . '/partials/head.php';
         color: #1f1f1f;
         padding-left: 10px;
     }
+
+    /* Threaded conversation */
+    .thread-message {
+        border: 1px solid var(--gmail-border);
+        border-radius: 12px;
+        background: var(--gmail-card-bg);
+        padding: 14px 18px;
+        margin-bottom: 12px;
+    }
+    .thread-message.is-sent {
+        background: #f8fafe;
+        border-color: #d7e3fb;
+    }
+    .thread-message-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+        user-select: none;
+    }
+    .thread-message-body { border-top: 1px solid var(--gmail-border); margin-top: 12px; }
+    .thread-message-body .gmail-reading-body { padding: 0; overflow-wrap: anywhere; }
+    .thread-message-body img { max-width: 100%; height: auto; }
+    .thread-message-body table { max-width: 100%; }
+    .thread-preview { min-height: 1em; }
+
+    /* Collapsed quoted reply chain */
+    .mail-quote-toggle {
+        border: none;
+        background: #e8eaed;
+        color: #5f6368;
+        border-radius: 10px;
+        padding: 1px 10px;
+        line-height: 1;
+        cursor: pointer;
+        transition: background-color 0.15s;
+    }
+    .mail-quote-toggle:hover,
+    .mail-quote-toggle.active { background: #d5d8dc; }
+    .mail-quote {
+        margin: 12px 0 0 0;
+        padding: 4px 0 4px 14px;
+        border-left: 2px solid #dadce0;
+        color: #5f6368;
+        font-size: 14px;
+        overflow-x: auto;
+    }
+    .mail-quote img { max-width: 100%; height: auto; }
+
+    /* Message bodies are attacker-controlled — never let one break the layout. */
+    #detailBody { overflow-wrap: anywhere; }
+    #detailBody img { max-width: 100%; height: auto; }
+    #detailBody table { max-width: 100%; }
 
     /* Main Workspace Split Layout */
     .gmail-workspace {
@@ -576,7 +632,9 @@ require __DIR__ . '/partials/head.php';
                     <!-- Email Reading Header -->
                     <div class="gmail-reading-header">
                         <h3 class="gmail-subject-title" id="detailSubject">Loading subject...</h3>
-                        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                        <!-- Single-message sender strip. Hidden in threaded view, where each
+                             message in the conversation carries its own header. -->
+                        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2" id="detailSingleHeader">
                             <div class="d-flex align-items-center">
                                 <div class="gmail-avatar fs-18 mb-0" id="detailAvatar" style="width:44px; height:44px;">?</div>
                                 <div>
@@ -1113,17 +1171,16 @@ function readEmail(id) {
         document.getElementById('detailAttachmentsContainer').classList.add('d-none');
     }
     
-    fetch('email.php?action=message&id=' + id)
+    fetch('email.php?action=thread&id=' + id + '&folder=INBOX')
         .then(res => res.json())
         .then(data => {
             if (data.error) {
                 document.getElementById('detailBody').innerHTML = '<div class="alert alert-danger my-4">' + data.error + '</div>';
                 return;
             }
-            
-            currentMessageData = data; // Store for reply quoting
-            populateEmailReader(data);
-            
+
+            populateThreadReader(data, id);
+
             // Mark as read in local cache
             let cached = allEmails.find(e => e.id == id);
             if (cached && cached.isUnread) {
@@ -1143,19 +1200,191 @@ function readSentEmail(id) {
     document.getElementById('detailBody').innerHTML = '<div class="text-center my-5 py-5"><div class="spinner-border text-primary my-2" role="status"></div><div class="text-muted fs-14 mt-2">Opening sent message...</div></div>';
     
     let sentFolder = 'Sent'; // Default; the server auto-detects
-    fetch('email.php?action=message&id=' + id + '&folder=' + encodeURIComponent(sentFolder))
+    fetch('email.php?action=thread&id=' + id + '&folder=' + encodeURIComponent(sentFolder))
         .then(res => res.json())
         .then(data => {
             if (data.error) {
                 document.getElementById('detailBody').innerHTML = '<div class="alert alert-danger my-4">' + data.error + '</div>';
                 return;
             }
-            currentMessageData = data;
-            populateEmailReader(data);
+            populateThreadReader(data, id);
         })
         .catch(err => {
             document.getElementById('detailBody').innerHTML = '<div class="alert alert-danger my-4">Network error.</div>';
         });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THREADED CONVERSATION READER
+// ═══════════════════════════════════════════════════════════════════
+function buildQuoteToggle(quotedHtml) {
+    let toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'mail-quote-toggle';
+    toggle.setAttribute('aria-label', 'Show trimmed content');
+    toggle.innerHTML = '<i class="ri-more-fill"></i>';
+
+    let quote = document.createElement('blockquote');
+    quote.className = 'mail-quote d-none';
+    quote.innerHTML = quotedHtml;
+
+    toggle.addEventListener('click', function () {
+        let hidden = quote.classList.toggle('d-none');
+        toggle.classList.toggle('active', !hidden);
+    });
+
+    let wrap = document.createElement('div');
+    wrap.className = 'mt-3';
+    wrap.appendChild(toggle);
+    wrap.appendChild(quote);
+    return wrap;
+}
+
+function buildAttachmentRow(attachments) {
+    let row = document.createElement('div');
+    row.className = 'd-flex flex-wrap gap-2 mt-3 pt-3 border-top';
+    attachments.forEach(att => {
+        let sizeStr = att.size ? ` (${Math.round(att.size / 1024)} KB)` : '';
+        let a = document.createElement('a');
+        a.className = 'btn btn-outline-secondary d-flex align-items-center gap-2 px-3 py-2 text-decoration-none rounded-3 bg-light-subtle text-dark border shadow-sm';
+        if (att.url) {
+            a.href = att.url;
+            a.target = '_blank';
+            a.setAttribute('download', '');
+            a.rel = 'noopener noreferrer';
+        } else {
+            a.href = '#';
+            a.addEventListener('click', e => { e.preventDefault(); alert('Attachment file not available.'); });
+        }
+        // textContent, not innerHTML — attachment names come from the message.
+        let title = document.createElement('div');
+        title.className = 'fw-bold fs-13 text-truncate text-dark';
+        title.style.maxWidth = '240px';
+        title.textContent = att.name;
+        let sub = document.createElement('div');
+        sub.className = 'text-muted fs-11';
+        sub.textContent = 'Click to download' + sizeStr;
+        let text = document.createElement('div');
+        text.className = 'text-start overflow-hidden';
+        text.appendChild(title); text.appendChild(sub);
+        let icon = document.createElement('i');
+        icon.className = 'ri-file-download-fill fs-20 text-primary';
+        a.appendChild(icon); a.appendChild(text);
+        row.appendChild(a);
+    });
+    return row;
+}
+
+function buildThreadMessage(msg, expanded) {
+    let hasName = (msg.fromName && msg.fromName !== 'null' && msg.fromName.trim() !== '' && msg.fromName !== msg.fromAddress);
+    let sender = hasName ? msg.fromName : (msg.fromAddress || 'Unknown');
+
+    let card = document.createElement('div');
+    card.className = 'thread-message' + (msg.isSent ? ' is-sent' : '');
+
+    // ── header (click to collapse/expand)
+    let head = document.createElement('div');
+    head.className = 'thread-message-head';
+
+    let avatar = document.createElement('div');
+    avatar.className = 'gmail-avatar fs-14';
+    avatar.style.cssText = 'width:36px;height:36px;flex-shrink:0;';
+    avatar.style.backgroundColor = getAvatarColor(sender);
+    avatar.textContent = sender.charAt(0).toUpperCase();
+
+    let who = document.createElement('div');
+    who.className = 'flex-grow-1 overflow-hidden';
+    let nameEl = document.createElement('div');
+    nameEl.className = 'fw-bold fs-14 text-dark text-truncate';
+    nameEl.textContent = sender + (msg.isSent ? ' (you)' : '');
+    let addrEl = document.createElement('div');
+    addrEl.className = 'text-muted fs-12 text-truncate thread-preview';
+    who.appendChild(nameEl); who.appendChild(addrEl);
+
+    let dateEl = document.createElement('div');
+    dateEl.className = 'text-muted fs-12 flex-shrink-0 ms-2';
+    dateEl.textContent = msg.date || '';
+
+    head.appendChild(avatar); head.appendChild(who); head.appendChild(dateEl);
+
+    // ── body
+    let bodyWrap = document.createElement('div');
+    bodyWrap.className = 'thread-message-body';
+    let body = document.createElement('div');
+    body.className = 'gmail-reading-body pt-3';
+    body.innerHTML = msg.body || '';
+    bodyWrap.appendChild(body);
+    if (msg.quoted) { bodyWrap.appendChild(buildQuoteToggle(msg.quoted)); }
+    if (msg.attachments && msg.attachments.length) { bodyWrap.appendChild(buildAttachmentRow(msg.attachments)); }
+
+    card.appendChild(head); card.appendChild(bodyWrap);
+
+    // Collapsed messages show a one-line preview instead of the full body.
+    function apply(open) {
+        bodyWrap.classList.toggle('d-none', !open);
+        addrEl.textContent = open
+            ? (hasName ? msg.fromAddress : '')
+            : (body.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    }
+    apply(expanded);
+    head.addEventListener('click', () => apply(bodyWrap.classList.contains('d-none')));
+
+    return card;
+}
+
+function populateThreadReader(thread, anchorId) {
+    if (!Array.isArray(thread) || thread.length === 0) {
+        document.getElementById('detailBody').innerHTML = '<div class="alert alert-warning my-4">Conversation could not be loaded.</div>';
+        return;
+    }
+
+    // Reply defaults come from the newest message that is not one of ours; failing
+    // that, the newest message overall.
+    let newest = thread[thread.length - 1];
+    let replyTarget = [...thread].reverse().find(m => !m.isSent) || newest;
+    currentMessageData = replyTarget;
+    currentEmailId = anchorId;
+
+    document.getElementById('detailSubject').innerText = newest.subject || 'No Subject';
+
+    // The single-message header and attachment strip are replaced by per-message ones.
+    let singleHeader = document.getElementById('detailSingleHeader');
+    if (singleHeader) { singleHeader.classList.add('d-none'); }
+    let attachmentsContainer = document.getElementById('detailAttachmentsContainer');
+    if (attachmentsContainer) { attachmentsContainer.classList.add('d-none'); }
+
+    let host = document.getElementById('detailBody');
+    host.innerHTML = '';
+
+    if (thread.length > 1) {
+        let count = document.createElement('div');
+        count.className = 'text-muted fs-13 fw-medium pb-2';
+        count.textContent = thread.length + ' messages in this conversation';
+        host.appendChild(count);
+    }
+
+    thread.forEach((msg, i) => {
+        // Newest expanded, plus whichever message was clicked. Older ones collapse.
+        let expanded = (i === thread.length - 1) || msg.isAnchor;
+        host.appendChild(buildThreadMessage(msg, expanded));
+    });
+
+    // Quick-reply footer targets the person we would actually be replying to.
+    let hasName = (replyTarget.fromName && replyTarget.fromName !== 'null' && replyTarget.fromName.trim() !== '' && replyTarget.fromName !== replyTarget.fromAddress);
+    let replyName = hasName ? replyTarget.fromName : replyTarget.fromAddress;
+    document.getElementById('quickReplySenderName').innerText = replyName;
+    document.getElementById('replyTo').value = replyTarget.fromAddress || '';
+    document.getElementById('replyToDisplay').value = replyTarget.fromAddress || '';
+    document.getElementById('replySubject').value = (newest.subject || '').startsWith('Re:')
+        ? newest.subject
+        : 'Re: ' + (newest.subject || '');
+
+    let quotedContent = document.getElementById('replyQuotedContent');
+    let quotedHeader = document.getElementById('replyQuotedHeader');
+    if (quotedContent && quotedHeader) {
+        quotedHeader.innerText = `On ${replyTarget.date}, ${replyName} wrote:`;
+        quotedContent.innerText = replyTarget.bodyPlain || '';
+    }
 }
 
 function populateEmailReader(data) {
@@ -1172,7 +1401,34 @@ function populateEmailReader(data) {
     avatarEl.style.backgroundColor = bg;
     
     document.getElementById('detailDate').innerText = data.date;
-    document.getElementById('detailBody').innerHTML = data.body;
+
+    // Body, with the quoted reply chain hidden behind a "•••" toggle the way a mail
+    // client does it — the server has already split and sanitised the two halves.
+    let bodyEl = document.getElementById('detailBody');
+    bodyEl.innerHTML = data.body || '';
+    if (data.quoted) {
+        let toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'mail-quote-toggle';
+        toggle.setAttribute('aria-label', 'Show trimmed content');
+        toggle.innerHTML = '<i class="ri-more-fill"></i>';
+
+        let quote = document.createElement('blockquote');
+        quote.className = 'mail-quote d-none';
+        quote.innerHTML = data.quoted;
+
+        toggle.addEventListener('click', function () {
+            let hidden = quote.classList.toggle('d-none');
+            toggle.classList.toggle('active', !hidden);
+        });
+
+        let wrap = document.createElement('div');
+        wrap.className = 'mt-3';
+        wrap.appendChild(toggle);
+        wrap.appendChild(quote);
+        bodyEl.appendChild(wrap);
+    }
+
     document.getElementById('quickReplySenderName').innerText = displaySender;
     
     // Attachments

@@ -307,13 +307,16 @@ class MailClient {
                 }
             }
 
+            $rendered = $this->renderBody($mail->textHtml, $mail->textPlain);
+
             return [
                 'id'          => $id,
                 'subject'     => $mail->subject,
                 'fromName'    => $mail->fromName,
                 'fromAddress' => $mail->fromAddress,
                 'date'        => date('F j, Y | g:i A', strtotime($mail->date)),
-                'body'        => $mail->textHtml ?: nl2br($mail->textPlain),
+                'body'        => $rendered['body'],
+                'quoted'      => $rendered['quoted'],
                 'bodyPlain'   => $mail->textPlain ?: strip_tags($mail->textHtml),
                 'attachments' => $formattedAttachments
             ];
@@ -321,6 +324,293 @@ class MailClient {
             error_log("IMAP Error: " . $e->getMessage());
             throw new \RuntimeException($e->getMessage(), 0, $e);
         }
+    }
+
+    // ─── Conversation Threading ──────────────────────────────────────
+
+    /**
+     * Every message belonging to the same conversation as $id, oldest first, with
+     * received and sent messages interleaved.
+     *
+     * Messages are matched on the RFC 5322 reference chain (Message-ID / In-Reply-To /
+     * References) and, as a fallback for clients that omit those, on a normalised
+     * subject. Overviews are fetched in one call per folder rather than opening each
+     * message, so building the chain costs two round trips regardless of mailbox size.
+     */
+    public function getThread($id, string $folder = 'INBOX', int $limit = 25): array {
+        $sentFolder = $this->detectSentFolder();
+        $folders = array_values(array_unique([$folder, 'INBOX', $sentFolder]));
+
+        // 1. Collect lightweight overviews from every folder we care about.
+        $overviews = [];
+        foreach ($folders as $name) {
+            try {
+                $box = $this->folderMailbox($name);
+                $ids = $box->searchMailbox('ALL');
+                if (!$ids) { continue; }
+                foreach ($box->getMailsInfo($ids) as $info) {
+                    $overviews[] = [
+                        'id'        => $info->uid ?? ($info->msgno ?? null),
+                        'folder'    => $name,
+                        'isSent'    => strcasecmp($name, $sentFolder) === 0,
+                        'subject'   => (string) ($info->subject ?? ''),
+                        'messageId' => $this->normaliseMessageId((string) ($info->message_id ?? '')),
+                        'refs'      => $this->extractMessageIds(
+                            ((string) ($info->references ?? '')) . ' ' . ((string) ($info->in_reply_to ?? ''))
+                        ),
+                        'udate'     => (int) ($info->udate ?? 0),
+                    ];
+                }
+            } catch (\Throwable $e) {
+                error_log("Thread: could not read folder {$name}: " . $e->getMessage());
+            }
+        }
+
+        // 2. Locate the message that was clicked.
+        $anchor = null;
+        foreach ($overviews as $o) {
+            if ((string) $o['id'] === (string) $id && $o['folder'] === $folder) { $anchor = $o; break; }
+        }
+        if ($anchor === null) {
+            // Fall back to the single message rather than showing nothing.
+            return [$this->getMessage($id, $folder) + ['isSent' => strcasecmp($folder, $sentFolder) === 0]];
+        }
+
+        // 3. Grow the id set until it stops changing — a reply may reference a message
+        //    we only learn about on a later pass.
+        $ids = array_filter(array_merge([$anchor['messageId']], $anchor['refs']));
+        $ids = array_values(array_unique($ids));
+        $subjectKey = $this->normaliseSubject($anchor['subject']);
+
+        $members = [];
+        do {
+            $grew = false;
+            foreach ($overviews as $k => $o) {
+                if (isset($members[$k])) { continue; }
+                $linked = ($o['messageId'] !== '' && in_array($o['messageId'], $ids, true))
+                    || array_intersect($o['refs'], $ids)
+                    || ($subjectKey !== '' && $this->normaliseSubject($o['subject']) === $subjectKey);
+                if ($linked) {
+                    $members[$k] = $o;
+                    foreach (array_merge([$o['messageId']], $o['refs']) as $mid) {
+                        if ($mid !== '' && !in_array($mid, $ids, true)) { $ids[] = $mid; }
+                    }
+                    $grew = true;
+                }
+            }
+        } while ($grew);
+
+        // 4. Oldest first, then load the bodies.
+        $members = array_values($members);
+        usort($members, static fn($a, $b) => $a['udate'] <=> $b['udate']);
+        if (count($members) > $limit) {
+            $members = array_slice($members, -$limit);
+        }
+
+        $thread = [];
+        foreach ($members as $m) {
+            try {
+                $message = $this->getMessage($m['id'], $m['folder']);
+                $message['isSent'] = $m['isSent'];
+                $message['folder'] = $m['folder'];
+                $message['isAnchor'] = ((string) $m['id'] === (string) $id && $m['folder'] === $folder);
+                $thread[] = $message;
+            } catch (\Throwable $e) {
+                continue; // skip anything unreadable rather than failing the whole thread
+            }
+        }
+        return $thread;
+    }
+
+    /** "<abc@host>" => "abc@host"; tolerates surrounding whitespace and missing brackets. */
+    private function normaliseMessageId(string $raw): string {
+        return strtolower(trim($raw, " \t\n\r<>"));
+    }
+
+    /** Pull every <...> message-id out of a References / In-Reply-To header. */
+    private function extractMessageIds(string $header): array {
+        if (!preg_match_all('/<([^<>]+)>/', $header, $m)) {
+            return [];
+        }
+        return array_values(array_unique(array_map('strtolower', array_map('trim', $m[1]))));
+    }
+
+    /** Strip any run of Re:/Fwd:/Fw:/RE[2]: prefixes so replies group with the original. */
+    private function normaliseSubject(string $subject): string {
+        $s = trim($subject);
+        do {
+            $before = $s;
+            $s = preg_replace('/^\s*(re|aw|fwd?|fw|sv|vs|antw|ответ|отв|пересылка|javob)\s*(\[\d+\])?\s*:\s*/iu', '', $s) ?? $s;
+        } while ($s !== $before);
+        return mb_strtolower(trim(preg_replace('/\s+/u', ' ', $s) ?? $s));
+    }
+
+    // ─── Body Rendering ──────────────────────────────────────────────
+
+    /**
+     * Turn a message into display HTML, split into the new content and the quoted
+     * history beneath it.
+     *
+     * @return array{body: string, quoted: string}
+     */
+    public function renderBody(?string $html, ?string $plain): array {
+        $html  = (string) $html;
+        $plain = (string) $plain;
+
+        if (trim($html) !== '') {
+            return $this->splitQuotedHtml($this->sanitizeHtml($html));
+        }
+        return $this->splitQuotedPlain($plain);
+    }
+
+    /**
+     * Strip anything executable out of message HTML.
+     *
+     * Mail bodies are attacker-controlled and the reader injects them with innerHTML,
+     * so an unsanitised message could run script in the logged-in admin's session.
+     */
+    private function sanitizeHtml(string $html): string {
+        if (!class_exists(\DOMDocument::class)) {
+            // No DOM extension — fall back to showing it as text rather than as markup.
+            return nl2br(htmlspecialchars(strip_tags($html), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+        }
+
+        $doc = new \DOMDocument();
+        $previous = libxml_use_internal_errors(true);
+        // The meta charset keeps DOMDocument from mangling UTF-8 (Cyrillic subjects/bodies).
+        $doc->loadHTML(
+            '<?xml encoding="UTF-8"><meta http-equiv="Content-Type" content="text/html; charset=utf-8">' . $html,
+            LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING
+        );
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        $xpath = new \DOMXPath($doc);
+
+        // Drop entire elements that can execute or phone home.
+        foreach (['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'input', 'button'] as $tag) {
+            $nodes = iterator_to_array($doc->getElementsByTagName($tag));
+            foreach ($nodes as $node) {
+                $node->parentNode?->removeChild($node);
+            }
+        }
+
+        foreach ($xpath->query('//*[@*]') ?: [] as $el) {
+            if (!$el instanceof \DOMElement) { continue; }
+            foreach (iterator_to_array($el->attributes) as $attr) {
+                $name  = strtolower($attr->name);
+                $value = trim($attr->value);
+                // on* handlers, and any URL scheme other than http/https/mailto/cid/data:image
+                if (str_starts_with($name, 'on')) {
+                    $el->removeAttribute($attr->name);
+                    continue;
+                }
+                if (in_array($name, ['href', 'src', 'action', 'background', 'formaction'], true)
+                    && preg_match('#^\s*(javascript|vbscript|file)\s*:#i', $value)) {
+                    $el->removeAttribute($attr->name);
+                    continue;
+                }
+                if ($name === 'src' && preg_match('#^\s*data\s*:#i', $value) && !preg_match('#^\s*data\s*:\s*image/#i', $value)) {
+                    $el->removeAttribute($attr->name);
+                }
+            }
+            // External links should not carry the admin session's referrer.
+            if (strtolower($el->tagName) === 'a' && $el->hasAttribute('href')) {
+                $el->setAttribute('target', '_blank');
+                $el->setAttribute('rel', 'noopener noreferrer nofollow');
+            }
+        }
+
+        $body = $doc->getElementsByTagName('body')->item(0);
+        if (!$body) {
+            return '';
+        }
+        $out = '';
+        foreach ($body->childNodes as $child) {
+            $out .= $doc->saveHTML($child);
+        }
+        return trim($out);
+    }
+
+    /**
+     * Pull <blockquote> / Gmail's quote container off the end of an HTML body.
+     *
+     * @return array{body: string, quoted: string}
+     */
+    private function splitQuotedHtml(string $html): array {
+        if (trim($html) === '' || !class_exists(\DOMDocument::class)) {
+            return ['body' => $html, 'quoted' => ''];
+        }
+        $doc = new \DOMDocument();
+        $previous = libxml_use_internal_errors(true);
+        $doc->loadHTML('<?xml encoding="UTF-8"><meta http-equiv="Content-Type" content="text/html; charset=utf-8">' . $html,
+            LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        $xpath = new \DOMXPath($doc);
+        $quotes = $xpath->query(
+            '//blockquote | //*[contains(concat(" ", normalize-space(@class), " "), " gmail_quote ")]'
+            . ' | //*[contains(concat(" ", normalize-space(@class), " "), " gmail_quote_container ")]'
+            . ' | //div[@id="appendonsend"]'
+        );
+        if (!$quotes || $quotes->length === 0) {
+            return ['body' => $html, 'quoted' => ''];
+        }
+
+        $quoted = '';
+        foreach (iterator_to_array($quotes) as $node) {
+            if (!$node->parentNode) { continue; } // already removed as part of an outer quote
+            $quoted .= $doc->saveHTML($node);
+            $node->parentNode->removeChild($node);
+        }
+
+        $body = $doc->getElementsByTagName('body')->item(0);
+        $rest = '';
+        if ($body) {
+            foreach ($body->childNodes as $child) {
+                $rest .= $doc->saveHTML($child);
+            }
+        }
+        return ['body' => trim($rest), 'quoted' => trim($quoted)];
+    }
+
+    /**
+     * Split a plain-text body at the start of the quoted reply chain.
+     *
+     * The text is escaped before any markup is added — without that, content that
+     * merely looks like a tag (`<Screenshot 2026-07-28 at 19.03.12.png>`, which is how
+     * Apple Mail names inline attachments) is swallowed by the browser's parser.
+     *
+     * @return array{body: string, quoted: string}
+     */
+    private function splitQuotedPlain(string $plain): array {
+        $plain = str_replace(["\r\n", "\r"], "\n", $plain);
+        $lines = explode("\n", $plain);
+
+        // "On <date>, <someone> wrote:", Outlook's separator, or the first ">" line.
+        $cut = null;
+        foreach ($lines as $i => $line) {
+            $t = trim($line);
+            if ($t === '') { continue; }
+            if (preg_match('/^On\b.{0,200}\bwrote:\s*$/isu', $t)
+                || preg_match('/^-{2,}\s*(Original Message|Forwarded message)\s*-{2,}/iu', $t)
+                || preg_match('/^_{5,}$/u', $t)
+                || str_starts_with($t, '>')) {
+                $cut = $i;
+                break;
+            }
+        }
+
+        $esc = static fn(string $s): string => nl2br(htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+
+        if ($cut === null) {
+            return ['body' => $esc(rtrim($plain)), 'quoted' => ''];
+        }
+        $new    = rtrim(implode("\n", array_slice($lines, 0, $cut)));
+        $quoted = trim(implode("\n", array_slice($lines, $cut)));
+
+        return ['body' => $esc($new), 'quoted' => $esc($quoted)];
     }
 
     // ─── Delete Message ──────────────────────────────────────────────
