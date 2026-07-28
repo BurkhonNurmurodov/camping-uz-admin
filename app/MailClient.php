@@ -21,11 +21,16 @@ class MailClient {
         // Fallback host per the domain's MX record — silknaviora.uz has no DNS records.
         $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
         $isLocal = in_array(strtolower($imapHost), ['127.0.0.1', 'localhost', '::1'], true);
-        $defaultPort = $isLocal ? 143 : 993;
-        $imapPort = (int) setting('mail_imap_port', getenv('IMAP_PORT') ?: $defaultPort);
+        
+        // When connecting to localhost / 127.0.0.1, always use port 143 with /notls to eliminate OpenSSL negotiation errors
+        if ($isLocal) {
+            $imapPort = 143;
+            $flags = '/notls';
+        } else {
+            $imapPort = (int) setting('mail_imap_port', getenv('IMAP_PORT') ?: 993);
+            $flags = $imapPort === 143 ? '/notls' : '/ssl/novalidate-cert';
+        }
 
-        // Use /notls on port 143 / localhost to prevent OpenSSL negotiation failures over internal loopback connections
-        $flags = ($imapPort === 143 || ($isLocal && $imapPort !== 993)) ? '/notls' : '/ssl/novalidate-cert';
         $this->imapPath = '{' . $imapHost . ':' . $imapPort . '/imap' . $flags . '}INBOX';
         $this->login = (string) setting('mail_username', getenv('MAIL_USER') ?: 'info@silknaviora.com');
         $this->password = (string) setting('mail_password', getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE');
