@@ -331,18 +331,52 @@ class MailClient {
      */
     public function sendMessage($to, $subject, $body, $cc = '', $bcc = '', $attachments = []) {
         $fromEmail = filter_var($this->login, FILTER_VALIDATE_EMAIL) ? $this->login : 'info@silknaviora.com';
+        $hasAuth = !empty($this->login) && !empty($this->password);
         
-        // Strategy 1: Configured SMTP (the correct way)
-        // Strategy 2: Sendmail binary fallback (bypasses network entirely)
-        $strategies = [
-            [
-                'name' => "SMTP ({$this->smtpHost}:{$this->smtpPort})",
-                'type' => 'smtp'
-            ],
-            [
-                'name' => "Sendmail (/usr/sbin/sendmail)",
-                'type' => 'sendmail'
-            ]
+        // Build strategy list: localhost first (avoids hairpin NAT), then configured host, then fallbacks
+        $strategies = [];
+
+        // Strategy 1: Localhost SMTP with authentication (same machine = fastest path)
+        $strategies[] = [
+            'name'   => "Localhost SMTP (localhost:{$this->smtpPort})",
+            'type'   => 'smtp',
+            'host'   => 'localhost',
+            'port'   => $this->smtpPort,
+            'auth'   => $hasAuth,
+            'secure' => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ''),
+            'autotls' => ($this->smtpPort === 587), // Try STARTTLS if 587, but don't force it
+        ];
+
+        // Strategy 2: Configured SMTP host (for external mail servers)
+        if (!in_array(strtolower(trim($this->smtpHost)), ['127.0.0.1', 'localhost', '::1'], true)) {
+            $strategies[] = [
+                'name'   => "SMTP ({$this->smtpHost}:{$this->smtpPort})",
+                'type'   => 'smtp',
+                'host'   => $this->smtpHost,
+                'port'   => $this->smtpPort,
+                'auth'   => $hasAuth,
+                'secure' => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ($this->smtpPort === 587 ? PHPMailer::ENCRYPTION_STARTTLS : '')),
+                'autotls' => true,
+            ];
+        }
+
+        // Strategy 3: Localhost port 25 unauthenticated relay (standard Postfix local delivery)
+        if ($this->smtpPort !== 25) {
+            $strategies[] = [
+                'name'   => "Localhost Relay (localhost:25)",
+                'type'   => 'smtp',
+                'host'   => 'localhost',
+                'port'   => 25,
+                'auth'   => false,
+                'secure' => '',
+                'autotls' => false,
+            ];
+        }
+
+        // Strategy 4: Sendmail binary (bypasses all network)
+        $strategies[] = [
+            'name' => "Sendmail (/usr/sbin/sendmail)",
+            'type' => 'sendmail'
         ];
 
         $errors = [];
@@ -353,25 +387,16 @@ class MailClient {
             try {
                 if ($strat['type'] === 'smtp') {
                     $mail->isSMTP();
-                    $mail->Host       = $this->smtpHost;
-                    $mail->Port       = $this->smtpPort;
-                    $mail->SMTPAuth   = !empty($this->login) && !empty($this->password);
-                    if ($mail->SMTPAuth) {
+                    $mail->Host       = $strat['host'];
+                    $mail->Port       = $strat['port'];
+                    $mail->SMTPAuth   = $strat['auth'];
+                    if ($strat['auth']) {
                         $mail->Username = $this->login;
                         $mail->Password = $this->password;
                     }
-
-                    // Determine encryption based on port
-                    if ($this->smtpPort === 465) {
-                        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-                    } elseif ($this->smtpPort === 587) {
-                        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-                    } else {
-                        $mail->SMTPSecure = '';
-                        $mail->SMTPAutoTLS = true; // Let PHPMailer try STARTTLS if available
-                    }
-
-                    $mail->Timeout = 10;
+                    $mail->SMTPSecure  = $strat['secure'];
+                    $mail->SMTPAutoTLS = $strat['autotls'];
+                    $mail->Timeout     = 5; // Fast fail so next strategy can try
                     $mail->SMTPOptions = [
                         'ssl' => [
                             'verify_peer'       => false,
@@ -438,7 +463,7 @@ class MailClient {
                 while (ob_get_level()) { ob_end_clean(); }
                 error_log("Email sent successfully via: " . $strat['name']);
 
-                // Save a copy to the Sent folder
+                // Save a copy to the Sent folder (non-blocking, non-critical)
                 $this->saveSentCopy($mail);
 
                 return true;
@@ -464,14 +489,16 @@ class MailClient {
             $sentFolder = $this->detectSentFolder();
             $serverPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}';
             
-            // Get the full RFC822 message that was just sent
-            $mail->preSend(); // Ensure headers are built
+            // getSentMIMEMessage() returns the full RFC822 message from the last send() call
             $rawMessage = $mail->getSentMIMEMessage();
             
-            @imap_append($stream, $serverPath . $sentFolder, $rawMessage, "\\Seen");
+            if (!empty($rawMessage)) {
+                @imap_append($stream, $serverPath . $sentFolder, $rawMessage, "\\Seen");
+            }
         } catch (\Throwable $e) {
             // Non-critical: log but don't fail the send
             error_log("Could not save to Sent folder: " . $e->getMessage());
         }
     }
 }
+
