@@ -91,28 +91,39 @@ class MailClient {
     public function __construct(int $accountId = 1) {
         $this->accountId = isset(self::ACCOUNT_PREFIXES[$accountId]) ? $accountId : 1;
 
+        // Credentials are per-account and never inherited — a blank secondary
+        // username must not silently open the primary mailbox. Read first: the
+        // host fallbacks below are derived from the mailbox domain.
+        $this->login    = (string) $this->accountSetting('username', $this->accountId === 1 ? (getenv('MAIL_USER') ?: 'info@silknaviora.com') : '');
+        $this->password = (string) $this->accountSetting('password', $this->accountId === 1 ? (getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE') : '');
+
         $this->imapHost = (string) $this->serverSetting('imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
         $this->imapPort = (int) $this->serverSetting('imap_port', getenv('IMAP_PORT') ?: 993);
 
+        $isLoopback = in_array(strtolower(trim($this->imapHost)), ['127.0.0.1', 'localhost', '::1'], true);
+
         // OpenSSL 3 crashes with "SSL negotiation failed" against localhost IPs on port 993.
-        if ($this->imapPort === 993 && in_array(strtolower(trim($this->imapHost)), ['127.0.0.1', 'localhost', '::1'], true)) {
-            $this->imapHost = 'mail.silknaviora.com';
+        if ($this->imapPort === 993 && $isLoopback) {
+            $this->imapHost = $this->publicMailHost();
+            $isLoopback = false;
         }
 
-        // Port 143 = STARTTLS, port 993 = implicit SSL
-        if ($this->imapPort === 143) {
-            $this->imapFlags = '/tls/novalidate-cert';
+        if ($isLoopback) {
+            // Loopback never leaves this machine, so encryption buys nothing — and
+            // forcing STARTTLS here fails outright when the local Dovecot doesn't
+            // advertise it on 143, or when its certificate can't complete a handshake
+            // under OpenSSL 3 ("TLS/SSL failure for 127.0.0.1: SSL negotiation
+            // failed"). /notls is explicit so imap_open cannot try to upgrade.
+            $this->imapFlags = '/notls';
+        } elseif ($this->imapPort === 143) {
+            $this->imapFlags = '/tls/novalidate-cert';   // STARTTLS
         } elseif ($this->imapPort === 993) {
-            $this->imapFlags = '/ssl/novalidate-cert';
+            $this->imapFlags = '/ssl/novalidate-cert';   // implicit SSL
         } else {
             $this->imapFlags = '/novalidate-cert';
         }
 
         $this->imapPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}INBOX';
-        // Credentials are per-account and never inherited — a blank secondary
-        // username must not silently open the primary mailbox.
-        $this->login    = (string) $this->accountSetting('username', $this->accountId === 1 ? (getenv('MAIL_USER') ?: 'info@silknaviora.com') : '');
-        $this->password = (string) $this->accountSetting('password', $this->accountId === 1 ? (getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE') : '');
         $this->smtpHost = (string) $this->serverSetting('smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
         $this->smtpPort = (int) $this->serverSetting('smtp_port', getenv('SMTP_PORT') ?: 587);
         $this->fromName = (string) $this->accountSetting('from_name', setting('agency_name_en', 'Silk Naviora'));
@@ -149,6 +160,19 @@ class MailClient {
             }
         }
         return $default;
+    }
+
+    /**
+     * A routable hostname for this mailbox's mail server, used when a loopback
+     * address cannot be dialled directly. Derived from the mailbox domain so a
+     * secondary account on another domain is not sent to the primary's server.
+     */
+    private function publicMailHost(): string {
+        $domain = substr(strrchr($this->login, '@') ?: '@', 1);
+        if ($domain !== '' && strpos($domain, '.') !== false) {
+            return 'mail.' . $domain;
+        }
+        return 'mail.silknaviora.com';
     }
 
     /** Slot id this client is bound to. */
@@ -302,7 +326,7 @@ class MailClient {
                         'fromName'    => $mail->fromName,
                         'fromAddress' => $mail->fromAddress,
                         'date'        => $mail->date, // Send raw date — JS will format it
-                        'isUnread'    => $mail->isUnseen,
+                        'isUnread'    => !$mail->isSeen,
                         'snippet'     => mb_substr(strip_tags($mail->textPlain ?: $mail->textHtml), 0, 100) . '...',
                         'hasAttachments' => !empty($mail->getAttachments())
                     ];
@@ -364,14 +388,9 @@ class MailClient {
 
     public function getMessage($id, $folder = 'INBOX') {
         try {
-            if ($folder !== 'INBOX') {
-                // Open a different folder for reading (reused if already open)
-                $mail = $this->folderMailbox($folder)->getMail($id);
-            } else {
-                $mailbox = $this->requireMailbox();
-                $mail = $mailbox->getMail($id);
-                $mailbox->markMailAsRead($id);
-            }
+            $box = $this->folderMailbox($folder);
+            $mail = $box->getMail($id, true);
+            $box->markMailAsRead($id);
 
             $formattedAttachments = [];
             $rawAttachments = $mail->getAttachments();
