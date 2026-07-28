@@ -20,15 +20,15 @@ class MailClient {
     public function __construct() {
         // Fallback host per the domain's MX record — silknaviora.uz has no DNS records.
         $imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
-        $isLocal = in_array(strtolower($imapHost), ['127.0.0.1', 'localhost', '::1'], true);
+        $imapPort = (int) setting('mail_imap_port', getenv('IMAP_PORT') ?: 993);
         
-        // When connecting to localhost / 127.0.0.1, always use port 143 with /notls to eliminate OpenSSL negotiation errors
-        if ($isLocal) {
-            $imapPort = 143;
-            $flags = '/notls';
+        // Port 143 uses STARTTLS (/tls) because modern Dovecot disables plain /notls logins; port 993 uses direct SSL (/ssl)
+        if ($imapPort === 143) {
+            $flags = '/tls/novalidate-cert';
+        } elseif ($imapPort === 993) {
+            $flags = '/ssl/novalidate-cert';
         } else {
-            $imapPort = (int) setting('mail_imap_port', getenv('IMAP_PORT') ?: 993);
-            $flags = $imapPort === 143 ? '/notls' : '/ssl/novalidate-cert';
+            $flags = '/novalidate-cert';
         }
 
         $this->imapPath = '{' . $imapHost . ':' . $imapPort . '/imap' . $flags . '}INBOX';
