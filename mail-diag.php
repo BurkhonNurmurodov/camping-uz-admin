@@ -294,23 +294,39 @@ timed("TCP $imapHost:$imapPort", function () use ($imapHost, $imapPort) {
     return '!! PROBLEM — ' . trim("$errstr (errno $errno)");
 });
 
-if (!extension_loaded('imap')) {
-    line('IMAP login test', 'skipped (php-imap extension not loaded)');
-} else {
-    imap_timeout(IMAP_OPENTIMEOUT, 6);
-    imap_timeout(IMAP_READTIMEOUT, 6);
-    timed('IMAP login + INBOX open', function () use ($imapHost, $imapPort, $login, $password) {
-        $stream = @imap_open('{' . $imapHost . ':' . $imapPort . '/imap/ssl/novalidate-cert}INBOX', $login, $password, OP_READONLY, 1);
-        if (!$stream) {
-            $err = (string) imap_last_error();
-            imap_errors(); imap_alerts();
-            return '!! PROBLEM — ' . $err;
-        }
-        $info = imap_check($stream);
-        imap_close($stream);
-        imap_errors(); imap_alerts();
-        return 'OK — ' . ($info ? $info->Nmsgs : '?') . ' messages in INBOX';
-    });
-}
+// Deliberately NOT imap_open(): ext-imap's c-client ignores imap_timeout() on this
+// path and blocks forever, which truncated every report. A raw IMAP conversation over
+// a stream with stream_set_timeout() is bounded and proves the same thing.
+timed('IMAP greeting + LOGIN', function () use ($imapHost, $imapPort, $login, $password) {
+    $quote = static fn(string $s): string => '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $s) . '"';
+    $scheme = ($imapPort === 993) ? 'ssl://' : 'tcp://';
+    $ctx = stream_context_create(['ssl' => [
+        'verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true,
+    ]]);
+    $errno = 0; $errstr = '';
+    $fp = @stream_socket_client($scheme . $imapHost . ':' . $imapPort, $errno, $errstr, 6, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fp) {
+        return '!! PROBLEM — ' . trim("$errstr (errno $errno)");
+    }
+    stream_set_timeout($fp, 6);
+    $greeting = rtrim((string) @fgets($fp, 2048), "\r\n");
+    if ($greeting === '') {
+        @fclose($fp);
+        return '!! PROBLEM — connected but no IMAP greeting within 6s';
+    }
+    @fwrite($fp, 'a1 LOGIN ' . $quote($login) . ' ' . $quote($password) . "\r\n");
+    $tagged = '';
+    while (($l = @fgets($fp, 2048)) !== false) {
+        if (strncmp($l, 'a1 ', 3) === 0) { $tagged = rtrim($l, "\r\n"); break; }
+        $meta = stream_get_meta_data($fp);
+        if ($meta['timed_out']) { break; }
+    }
+    @fwrite($fp, "a2 LOGOUT\r\n");
+    @fclose($fp);
+
+    if ($tagged === '')                        { return '!! PROBLEM — greeted (' . $greeting . ') but LOGIN never answered'; }
+    if (strncmp($tagged, 'a1 OK', 5) === 0)    { return 'OK — ' . $greeting; }
+    return '!! PROBLEM — LOGIN rejected: ' . $tagged; // never contains the password
+});
 
 out("\n=== End of report — delete this file from the server when done ===\n");
