@@ -69,8 +69,11 @@ $me = admin_user();
                         </span>
                     </button>
                     <div class="dropdown-menu dropdown-menu-end header-dropdown-menu p-2">
-                        <a class="dropdown-item rounded" href="<?= BASE_PATH ?>/settings"><i class="bi bi-gear me-2"></i> Settings</a>
-                        <a class="dropdown-item rounded" href="<?= BASE_PATH ?>/logout"><i class="bi bi-box-arrow-right me-2"></i> <?= e(t('admin_logout')) ?></a>
+                        <a class="dropdown-item rounded" href="<?= BASE_PATH ?>/account"><i class="bi bi-person-shield me-2"></i> Admin Account</a>
+                        <a class="dropdown-item rounded" href="<?= BASE_PATH ?>/settings"><i class="bi bi-gear me-2"></i> General Settings</a>
+                        <a class="dropdown-item rounded" href="<?= BASE_PATH ?>/integrations"><i class="bi bi-sliders me-2"></i> Integrations &amp; Mail</a>
+                        <div class="dropdown-divider"></div>
+                        <a class="dropdown-item rounded text-danger" href="<?= BASE_PATH ?>/logout"><i class="bi bi-box-arrow-right me-2"></i> <?= e(t('admin_logout')) ?></a>
                     </div>
                 </div>
             </div>
