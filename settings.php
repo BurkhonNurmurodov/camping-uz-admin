@@ -68,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'agency_name_en', 'agency_name_ru', 'moto_en', 'moto_ru',
             'social_instagram', 'social_telegram', 'social_facebook', 'social_whatsapp',
             'telegram_bot_token', 'telegram_chat_id', 'google_maps_api_key',
-            'mail_imap_host', 'mail_username', 'mail_smtp_host', 'mail_smtp_port',
+            'mail_imap_host', 'mail_imap_port', 'mail_username', 'mail_smtp_host', 'mail_smtp_port',
         ] as $k) {
             set_setting($k, trim((string) input($k, '')));
         }
@@ -360,16 +360,20 @@ $heroVideo = setting('hero_video');
                             <input type="text" name="mail_imap_host" class="form-control" value="<?= e(setting('mail_imap_host', 'mail.silknaviora.uz')) ?>" placeholder="mail.example.com">
                         </div>
                         <div class="col-md-6">
+                            <label class="form-label">IMAP port</label>
+                            <input type="number" name="mail_imap_port" class="form-control" value="<?= e(setting('mail_imap_port', '143')) ?>" min="1" max="65535" placeholder="143 (non-SSL/local) or 993 (SSL)">
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label">SMTP host</label>
                             <input type="text" name="mail_smtp_host" class="form-control" value="<?= e(setting('mail_smtp_host', 'mail.silknaviora.uz')) ?>" placeholder="mail.example.com">
                         </div>
                         <div class="col-md-6">
+                            <label class="form-label">SMTP port</label>
+                            <input type="number" name="mail_smtp_port" class="form-control" value="<?= e(setting('mail_smtp_port', '587')) ?>" min="1" max="65535">
+                        </div>
+                        <div class="col-12">
                             <label class="form-label">Mail username</label>
                             <input type="email" name="mail_username" class="form-control" value="<?= e(setting('mail_username', 'info@silknaviora.uz')) ?>" placeholder="info@example.com">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">SMTP port</label>
-                            <input type="number" name="mail_smtp_port" class="form-control" value="<?= e(setting('mail_smtp_port', '465')) ?>" min="1" max="65535">
                         </div>
                         <div class="col-12">
                             <label class="form-label">Mail password</label>
