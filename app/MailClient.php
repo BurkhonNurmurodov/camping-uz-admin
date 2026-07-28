@@ -148,17 +148,24 @@ class MailClient {
 
     public function sendMessage($to, $subject, $body) {
         $mail = new PHPMailer(true);
+        $isLocal = in_array(strtolower(trim($this->smtpHost)), ['127.0.0.1', 'localhost', '::1'], true);
 
         try {
             // Server settings
             $mail->isSMTP();
             $mail->Host       = $this->smtpHost;
-            $mail->SMTPAuth   = true;
+            $mail->SMTPAuth   = !empty($this->login) && !empty($this->password);
             $mail->Username   = $this->login;
             $mail->Password   = $this->password;
-            $mail->SMTPSecure = $this->smtpPort === 465
-                ? PHPMailer::ENCRYPTION_SMTPS
-                : PHPMailer::ENCRYPTION_STARTTLS;
+            
+            if ($this->smtpPort === 465) {
+                $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+            } elseif ($this->smtpPort === 587) {
+                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            } else {
+                $mail->SMTPSecure = '';
+                $mail->SMTPAutoTLS = false;
+            }
             $mail->Port       = $this->smtpPort;
 
             // Prevent SSL hostname mismatch errors when connecting to 127.0.0.1 or local mail servers
@@ -182,9 +189,26 @@ class MailClient {
 
             $mail->send();
             return true;
-        } catch (Exception $e) {
-            error_log("Message could not be sent. Mailer Error: {$mail->ErrorInfo}");
-            return false;
+        } catch (\Throwable $e) {
+            $firstError = $mail->ErrorInfo ?: $e->getMessage();
+            error_log("First SMTP send attempt failed: {$firstError}");
+
+            // Automatic fallback for local Postfix servers:
+            // Many Ubuntu VPS Postfix implementations disallow SASL auth or forced STARTTLS over loopback connections (127.0.0.1).
+            if ($isLocal) {
+                try {
+                    $mail->SMTPAuth = false;
+                    $mail->SMTPSecure = '';
+                    $mail->SMTPAutoTLS = false;
+                    $mail->send();
+                    return true;
+                } catch (\Throwable $fallbackError) {
+                    $secondError = $mail->ErrorInfo ?: $fallbackError->getMessage();
+                    error_log("Fallback SMTP send failed: {$secondError}");
+                }
+            }
+
+            throw new \RuntimeException($firstError);
         }
     }
 }

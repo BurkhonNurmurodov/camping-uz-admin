@@ -33,10 +33,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $subject = input('subject', '');
     $body = input('body', '');
     
-    if ($mailClient->sendMessage($to, $subject, $body)) {
-        flash('success', 'Email sent successfully.');
-    } else {
-        flash('error', 'Failed to send email.');
+    try {
+        if ($mailClient->sendMessage($to, $subject, $body)) {
+            flash('success', 'Email sent successfully.');
+        }
+    } catch (\Throwable $e) {
+        flash('error', 'Failed to send email: ' . $e->getMessage());
     }
     redirect('email.php');
 }
