@@ -30,6 +30,11 @@ class MailClient {
 
         // Try to connect to IMAP
         try {
+            if (function_exists('imap_timeout')) {
+                imap_timeout(IMAP_OPENTIMEOUT, 5);
+                imap_timeout(IMAP_READTIMEOUT, 10);
+                imap_timeout(IMAP_WRITETIMEOUT, 10);
+            }
             if (!class_exists(Mailbox::class)) {
                 throw new \RuntimeException('The php-imap library is not installed on this server: vendor/php-imap is missing or the Composer autoloader is stale. Re-upload the whole vendor/ folder or run "composer install" on the server.');
             }

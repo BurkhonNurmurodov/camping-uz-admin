@@ -8,6 +8,9 @@ $mailClient = new \App\MailClient();
 
 // Handle AJAX requests
 if (isset($_GET['action'])) {
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close(); // Release session lock instantly so IMAP retries never freeze other admin tabs
+    }
     header('Content-Type: application/json');
     try {
         if ($_GET['action'] === 'inbox') {
