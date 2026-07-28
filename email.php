@@ -33,11 +33,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $subject = input('subject', '');
     $body = input('body', '');
     
+    $isAjax = !empty($_POST['ajax']) || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false);
+
     try {
         if ($mailClient->sendMessage($to, $subject, $body)) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true, 'message' => 'Message sent successfully!']);
+                exit;
+            }
             flash('success', 'Email sent successfully.');
         }
     } catch (\Throwable $e) {
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+            exit;
+        }
         flash('error', 'Failed to send email: ' . $e->getMessage());
     }
     redirect('email.php');
@@ -578,7 +590,90 @@ require __DIR__ . '/partials/head.php';
     </div>
 </div>
 
+<!-- Gmail Inspired Floating Toast Banner -->
+<div id="gmailToast" class="position-fixed bottom-0 start-0 m-4 shadow-lg rounded-3 py-3 px-4 d-flex align-items-center gap-3 d-none z-3" style="background: #202124; color: #fff; min-width: 280px; max-width: 520px; border-radius: 8px; transition: all 0.2s ease;">
+    <div id="gmailToastIcon"><span class="spinner-border spinner-border-sm text-white"></span></div>
+    <span id="gmailToastMessage" class="fs-14 fw-medium flex-grow-1">Sending message...</span>
+    <button type="button" class="btn-close btn-close-white ms-auto fs-12 d-none" id="gmailToastClose" onclick="document.getElementById('gmailToast').classList.add('d-none')"></button>
+</div>
+
 <script>
+// Gmail-style Asynchronous Sending ("Send and forget" UI model)
+function showGmailToast(message, type = 'loading', duration = 0) {
+    const toast = document.getElementById('gmailToast');
+    const icon = document.getElementById('gmailToastIcon');
+    const msgEl = document.getElementById('gmailToastMessage');
+    const closeBtn = document.getElementById('gmailToastClose');
+    
+    toast.classList.remove('d-none');
+    msgEl.innerText = message;
+    
+    if (type === 'loading') {
+        icon.innerHTML = '<span class="spinner-border spinner-border-sm text-white"></span>';
+        closeBtn.classList.add('d-none');
+        toast.style.background = '#202124';
+    } else if (type === 'success') {
+        icon.innerHTML = '<i class="ri-checkbox-circle-fill text-success fs-20"></i>';
+        closeBtn.classList.remove('d-none');
+        toast.style.background = '#202124';
+    } else if (type === 'error') {
+        icon.innerHTML = '<i class="ri-error-warning-fill text-danger fs-20"></i>';
+        closeBtn.classList.remove('d-none');
+        toast.style.background = '#3a1e20'; // Subtle dark red tone
+    }
+    
+    if (duration > 0) {
+        setTimeout(() => {
+            toast.classList.add('d-none');
+        }, duration);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('#composeModal form, #replyModal form').forEach(form => {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            let formData = new FormData(this);
+            formData.append('ajax', '1');
+            
+            // Optimistic UI: Immediately dismiss modal so user isn't frozen waiting for SMTP networks
+            let modalEl = this.closest('.modal');
+            let modalInstance = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+            modalInstance.hide();
+            
+            // Display floating status banner
+            showGmailToast('Sending message...', 'loading');
+            
+            let submitBtn = this.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.disabled = true;
+            
+            fetch('email.php', {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (submitBtn) submitBtn.disabled = false;
+                if (data.success) {
+                    form.reset();
+                    showGmailToast(data.message || 'Message sent successfully!', 'success', 6000);
+                } else {
+                    showGmailToast('Failed to send: ' + (data.error || 'Server error'), 'error', 0);
+                    // Automatically reopen compose modal so drafted text is not lost
+                    modalInstance.show();
+                }
+            })
+            .catch(err => {
+                if (submitBtn) submitBtn.disabled = false;
+                showGmailToast('Network communication error with mail server.', 'error', 0);
+                modalInstance.show();
+            });
+        });
+    });
+});
+
 let allEmails = [];
 let currentEmailId = null;
 let currentFilter = 'all'; // 'all' | 'unread'
