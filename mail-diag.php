@@ -81,12 +81,33 @@ check('class_exists(PHPMailer)', class_exists('PHPMailer\\PHPMailer\\PHPMailer')
 
 // ───────────────────────────────────────────────────────────────────────────
 out("\n--- Mail settings in use ---\n");
-$imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
-$imapPort = (int) setting('mail_imap_port', getenv('IMAP_PORT') ?: 993);
-$login    = (string) setting('mail_username', getenv('MAIL_USER') ?: 'info@silknaviora.com');
-$password = (string) setting('mail_password', getenv('MAIL_PASS') ?: '');
-$smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
-$smtpPort = (int) setting('mail_smtp_port', getenv('SMTP_PORT') ?: 587);
+// Which mailbox to test: /mail-diag.php?account=2 for the secondary one.
+require_once __DIR__ . '/app/MailClient.php';
+$diagAccounts = \App\MailClient::accounts();
+$diagAccount  = \App\MailClient::resolveAccountId($_GET['account'] ?? 1);
+$prefix       = \App\MailClient::ACCOUNT_PREFIXES[$diagAccount];
+/** Server settings fall back to the primary account's, the same way MailClient does. */
+$diagSetting = static function (string $key, $default = null) use ($prefix, $diagAccount) {
+    $value = setting($prefix . $key, null);
+    if (($value === null || $value === '') && $diagAccount !== 1) {
+        $value = setting('mail_' . $key, null);
+    }
+    return ($value === null || $value === '') ? $default : $value;
+};
+
+line('Account under test', '#' . $diagAccount . ' (' . ($diagAccounts[$diagAccount]['label'] ?? '?') . ')');
+if (count($diagAccounts) > 1) {
+    line('Other accounts', implode(', ', array_map(
+        static fn(array $a): string => '?account=' . $a['id'] . ' → ' . $a['address'],
+        array_values(array_filter($diagAccounts, static fn(array $a): bool => $a['id'] !== $diagAccount))
+    )));
+}
+$imapHost = (string) $diagSetting('imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
+$imapPort = (int) $diagSetting('imap_port', getenv('IMAP_PORT') ?: 993);
+$login    = (string) setting($prefix . 'username', $diagAccount === 1 ? (getenv('MAIL_USER') ?: 'info@silknaviora.com') : '');
+$password = (string) setting($prefix . 'password', $diagAccount === 1 ? (getenv('MAIL_PASS') ?: '') : '');
+$smtpHost = (string) $diagSetting('smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
+$smtpPort = (int) $diagSetting('smtp_port', getenv('SMTP_PORT') ?: 587);
 line('IMAP host', $imapHost . ':' . $imapPort);
 line('SMTP host', $smtpHost . ':' . $smtpPort);
 line('Username', $login);

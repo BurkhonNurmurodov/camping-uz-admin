@@ -18,6 +18,8 @@ class MailClient {
     private $password;
     private $smtpHost;
     private $smtpPort;
+    private int $accountId;
+    private string $fromName;
     private ?string $connectionError = null;
     private ?string $sentFolderCache = null;
     private ?string $lastTransport = null;
@@ -35,10 +37,63 @@ class MailClient {
     private const SMTP_READ_TIMELIMIT  = 10;  // seconds, per server reply (x2 during DATA)
     private const SEND_TIME_BUDGET     = 40;  // seconds, total across all strategies
 
-    public function __construct() {
-        $this->imapHost = (string) setting('mail_imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
-        $this->imapPort = (int) setting('mail_imap_port', getenv('IMAP_PORT') ?: 993);
-        
+    /**
+     * Settings-key prefix per mailbox slot. Slot 1 keeps the original unprefixed
+     * "mail_*" keys so an existing installation keeps working untouched; every
+     * further slot is namespaced ("mail2_imap_host", "mail2_username", ...).
+     *
+     * To offer a third mailbox, add `3 => 'mail3_'` here and a matching card on
+     * the Integrations page — nothing else in this class is slot-aware.
+     */
+    public const ACCOUNT_PREFIXES = [1 => 'mail_', 2 => 'mail2_'];
+
+    /**
+     * Mailbox slots that are actually usable, keyed by slot id.
+     *
+     * A slot counts as configured once it has an address; slot 1 always qualifies
+     * because it falls back to the built-in default. This is what the account
+     * switcher on the Email page lists — blank out the address of slot 2 in
+     * Integrations and it disappears from the UI again.
+     *
+     * @return array<int, array{id:int, address:string, label:string, isPrimary:bool}>
+     */
+    public static function accounts(): array {
+        $accounts = [];
+        foreach (self::ACCOUNT_PREFIXES as $id => $prefix) {
+            $address = trim((string) setting($prefix . 'username', ''));
+            if ($address === '' && $id === 1) {
+                $address = (string) (getenv('MAIL_USER') ?: 'info@silknaviora.com');
+            }
+            if ($address === '') {
+                continue;
+            }
+            $label = trim((string) setting($prefix . 'label', ''));
+            $accounts[$id] = [
+                'id'        => $id,
+                'address'   => $address,
+                'label'     => $label !== '' ? $label : $address,
+                'isPrimary' => $id === 1,
+            ];
+        }
+        return $accounts;
+    }
+
+    /** Turn a user-supplied ?account= value into a slot that really exists. */
+    public static function resolveAccountId($raw): int {
+        $accounts = self::accounts();
+        $id = (int) $raw;
+        if (isset($accounts[$id])) {
+            return $id;
+        }
+        return (int) (array_key_first($accounts) ?? 1);
+    }
+
+    public function __construct(int $accountId = 1) {
+        $this->accountId = isset(self::ACCOUNT_PREFIXES[$accountId]) ? $accountId : 1;
+
+        $this->imapHost = (string) $this->serverSetting('imap_host', getenv('IMAP_HOST') ?: 'mail.silknaviora.com');
+        $this->imapPort = (int) $this->serverSetting('imap_port', getenv('IMAP_PORT') ?: 993);
+
         // OpenSSL 3 crashes with "SSL negotiation failed" against localhost IPs on port 993.
         if ($this->imapPort === 993 && in_array(strtolower(trim($this->imapHost)), ['127.0.0.1', 'localhost', '::1'], true)) {
             $this->imapHost = 'mail.silknaviora.com';
@@ -54,14 +109,56 @@ class MailClient {
         }
 
         $this->imapPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}INBOX';
-        $this->login    = (string) setting('mail_username', getenv('MAIL_USER') ?: 'info@silknaviora.com');
-        $this->password = (string) setting('mail_password', getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE');
-        $this->smtpHost = (string) setting('mail_smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
-        $this->smtpPort = (int) setting('mail_smtp_port', getenv('SMTP_PORT') ?: 587);
+        // Credentials are per-account and never inherited — a blank secondary
+        // username must not silently open the primary mailbox.
+        $this->login    = (string) $this->accountSetting('username', $this->accountId === 1 ? (getenv('MAIL_USER') ?: 'info@silknaviora.com') : '');
+        $this->password = (string) $this->accountSetting('password', $this->accountId === 1 ? (getenv('MAIL_PASS') ?: 'YOUR_PASSWORD_HERE') : '');
+        $this->smtpHost = (string) $this->serverSetting('smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
+        $this->smtpPort = (int) $this->serverSetting('smtp_port', getenv('SMTP_PORT') ?: 587);
+        $this->fromName = (string) $this->accountSetting('from_name', setting('agency_name_en', 'Silk Naviora'));
         $this->allowSendmailFallback = filter_var(
-            setting('mail_allow_sendmail_fallback', getenv('MAIL_ALLOW_SENDMAIL') ?: '0'),
+            $this->serverSetting('allow_sendmail_fallback', getenv('MAIL_ALLOW_SENDMAIL') ?: '0'),
             FILTER_VALIDATE_BOOLEAN
         );
+    }
+
+    // ─── Per-account settings ────────────────────────────────────────
+
+    /** A setting that belongs to this mailbox alone (address, password, sender name). */
+    private function accountSetting(string $key, $default = null) {
+        return setting(self::ACCOUNT_PREFIXES[$this->accountId] . $key, $default);
+    }
+
+    /**
+     * A server-level setting (host, port, transport behaviour).
+     *
+     * Secondary mailboxes usually live on the same mail server as the primary one,
+     * so anything left blank falls back to the primary account's value before the
+     * built-in default. Only leave these filled in when a mailbox is hosted
+     * elsewhere.
+     */
+    private function serverSetting(string $key, $default = null) {
+        $value = $this->accountSetting($key, null);
+        if ($value !== null && $value !== '') {
+            return $value;
+        }
+        if ($this->accountId !== 1) {
+            $primary = setting(self::ACCOUNT_PREFIXES[1] . $key, null);
+            if ($primary !== null && $primary !== '') {
+                return $primary;
+            }
+        }
+        return $default;
+    }
+
+    /** Slot id this client is bound to. */
+    public function getAccountId(): int {
+        return $this->accountId;
+    }
+
+    /** The mailbox address this client reads and sends as. */
+    public function getAddress(): string {
+        return $this->login;
     }
 
     // ─── IMAP Connection (Lazy-loaded) ───────────────────────────────
@@ -662,7 +759,12 @@ class MailClient {
             throw new \InvalidArgumentException('"' . $to . '" is not a valid recipient address.');
         }
 
-        $fromEmail = filter_var($this->login, FILTER_VALIDATE_EMAIL) ? $this->login : 'info@silknaviora.com';
+        if (!filter_var($this->login, FILTER_VALIDATE_EMAIL)) {
+            // Only reachable for a half-configured secondary mailbox. Sending as the
+            // primary address instead would put the wrong sender on the message.
+            throw new \RuntimeException('Mail account #' . $this->accountId . ' has no valid address configured. Set it on the Integrations page.');
+        }
+        $fromEmail = $this->login;
         $hasAuth = !empty($this->login) && !empty($this->password);
 
         $strategies = $this->buildSendStrategies($hasAuth);
@@ -714,7 +816,7 @@ class MailClient {
                 // unqualified greeting gets the message refused.
                 $mail->Hostname = $this->heloHostname();
 
-                $mail->setFrom($fromEmail, 'Silk Naviora');
+                $mail->setFrom($fromEmail, $this->fromName !== '' ? $this->fromName : 'Silk Naviora');
                 $mail->Sender = $fromEmail;
 
                 // To
@@ -764,7 +866,7 @@ class MailClient {
 
                 $this->lastTransport = $strat['name'];
                 $elapsed = round(microtime(true) - $started, 2);
-                error_log("Mail accepted for delivery via [{$strat['name']}] in {$elapsed}s (to: {$to})");
+                error_log("Mail accepted for delivery via [{$strat['name']}] in {$elapsed}s (from: {$fromEmail}, to: {$to})");
 
                 // Save a copy to the Sent folder (non-critical — never fail the send for this)
                 $this->saveSentCopy($mail);

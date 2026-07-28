@@ -2,24 +2,39 @@
 require __DIR__ . '/app/bootstrap.php';
 require_admin();
 require __DIR__ . '/partials/widgets.php';
+require_once __DIR__ . '/app/MailClient.php';
 
 $me = admin_user();
+
+/** Fields stored once per mailbox, prefixed with the account's key prefix. */
+const MAIL_ACCOUNT_FIELDS = [
+    'label', 'from_name', 'username', 'imap_host', 'imap_port', 'smtp_host', 'smtp_port',
+];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
     $action = input('action', 'integrations');
 
     if ($action === 'integrations') {
-        foreach ([
-            'telegram_bot_token', 'telegram_chat_id', 'google_maps_api_key',
-            'mail_imap_host', 'mail_imap_port', 'mail_username', 'mail_smtp_host', 'mail_smtp_port',
-        ] as $k) {
+        foreach (['telegram_bot_token', 'telegram_chat_id', 'google_maps_api_key'] as $k) {
             set_setting($k, trim((string) input($k, '')));
         }
-        
-        $mailPassword = (string) input('mail_password', '');
-        if ($mailPassword !== '') {
-            set_setting('mail_password', $mailPassword);
+
+        foreach (\App\MailClient::ACCOUNT_PREFIXES as $slot => $prefix) {
+            foreach (MAIL_ACCOUNT_FIELDS as $field) {
+                set_setting($prefix . $field, trim((string) input($prefix . $field, '')));
+            }
+            // A blank password field means "keep the stored one" — the form never
+            // renders the saved value back to the browser.
+            $password = (string) input($prefix . 'password', '');
+            if ($password !== '') {
+                set_setting($prefix . 'password', $password);
+            }
+            // Clearing the address retires the mailbox; drop its password too rather
+            // than leaving a live credential behind for an account nobody can see.
+            if (trim((string) input($prefix . 'username', '')) === '' && $slot !== 1) {
+                set_setting($prefix . 'password', '');
+            }
         }
 
         flash('success', 'Integration settings saved successfully.');
@@ -38,6 +53,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $page = ['title' => 'Integrations & Mail', 'section' => 'System', 'active' => 'integrations'];
+
+// One editable card per mailbox slot. Slot 1 keeps the historical "mail_*" keys and
+// its own defaults; every other slot starts empty and inherits the primary server.
+$mailSlots = [];
+foreach (\App\MailClient::ACCOUNT_PREFIXES as $slot => $prefix) {
+    $isPrimary = ($slot === 1);
+    $address   = (string) setting($prefix . 'username', $isPrimary ? 'info@silknaviora.uz' : '');
+    $label     = (string) setting($prefix . 'label', '');
+    $mailSlots[$slot] = [
+        'id'         => $slot,
+        'prefix'     => $prefix,
+        'isPrimary'  => $isPrimary,
+        'address'    => $address,
+        'label'      => $label,
+        'tabTitle'   => $label !== '' ? $label : ($address !== '' ? $address : 'Second account'),
+        'configured' => $address !== '',
+    ];
+}
+
 require __DIR__ . '/partials/head.php';
 ?>
 
@@ -66,10 +100,18 @@ require __DIR__ . '/partials/head.php';
                 <p class="text-body-secondary fs-13 mb-3">
                     Configure your incoming IMAP server to read mailbox correspondence directly in the Webmail tab, and your outgoing SMTP relay for automated notifications and replies.
                 </p>
-                <div class="alert bg-primary-subtle text-primary-emphasis border-0 rounded-3 fs-12 p-3 mb-0 d-flex gap-2">
+                <div class="alert bg-primary-subtle text-primary-emphasis border-0 rounded-3 fs-12 p-3 mb-3 d-flex gap-2">
                     <i class="ri-shield-flash-line fs-16 flex-shrink-0 mt-n1"></i>
                     <div>
                         <strong>Smart Routing Enabled:</strong> The mail engine automatically tests local relay sockets (<code>localhost:587/25</code>) first to bypass external firewall hairpin timeouts.
+                    </div>
+                </div>
+                <div class="alert bg-body-secondary border-0 rounded-3 fs-12 p-3 mb-0 d-flex gap-2">
+                    <i class="ri-mail-add-line fs-16 flex-shrink-0 mt-n1"></i>
+                    <div>
+                        <strong>Two mailboxes.</strong> Fill in the second tab and it appears in the mailbox switcher on the
+                        <a href="email" class="fw-semibold">Email page</a>, with its own inbox, sent folder and sending address.
+                        Clear its email address to retire it.
                     </div>
                 </div>
             </div>
@@ -77,61 +119,117 @@ require __DIR__ . '/partials/head.php';
 
         <div class="col-12 col-xl-8">
             <div class="card shadow-sm border rounded-3 h-100">
-                <div class="card-body p-4">
-                    <!-- Incoming Mail Server -->
-                    <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Incoming Server (IMAP)</h6>
-                    <div class="row g-3">
-                        <div class="col-md-8">
-                            <label class="form-label fw-medium fs-13">IMAP Hostname</label>
-                            <input type="text" name="mail_imap_host" class="form-control" value="<?= e(setting('mail_imap_host', 'mail.silknaviora.uz')) ?>" placeholder="e.g. mail.silknaviora.com">
-                            <div class="form-text fs-12 text-body-secondary">Primary receiving hostname for mailbox synchronization.</div>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label fw-medium fs-13">Port</label>
-                            <input type="number" name="mail_imap_port" class="form-control" value="<?= e(setting('mail_imap_port', '143')) ?>" min="1" max="65535" placeholder="143 or 993">
-                            <div class="form-text fs-12 text-body-secondary">143 (TLS/Local) or 993 (SSL).</div>
-                        </div>
-                    </div>
+                <div class="card-header bg-white border-0 px-4 pt-3 pb-0">
+                    <ul class="nav nav-tabs" role="tablist">
+                        <?php foreach ($mailSlots as $slot): ?>
+                            <li class="nav-item">
+                                <a class="nav-link d-flex align-items-center gap-2 <?= $slot['isPrimary'] ? 'active' : '' ?>"
+                                   data-bs-toggle="tab" href="#mailAccount<?= (int) $slot['id'] ?>" role="tab">
+                                    <i class="ri-mail-line fs-15"></i>
+                                    <span class="text-truncate" style="max-width: 190px;"><?= e($slot['tabTitle']) ?></span>
+                                    <?php if (!$slot['configured']): ?>
+                                        <span class="badge bg-body-secondary text-body-secondary fs-11">not set up</span>
+                                    <?php endif; ?>
+                                </a>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+                <div class="card-body p-4 tab-content">
+                    <?php foreach ($mailSlots as $slot):
+                        $p          = $slot['prefix'];
+                        $isPrimary  = $slot['isPrimary'];
+                        $hasPass    = setting($p . 'password', '') !== '';
+                        // Blank host/port on a secondary mailbox means "same server as the primary".
+                        $hostPh     = $isPrimary ? 'e.g. mail.silknaviora.com' : (setting('mail_imap_host', 'mail.silknaviora.uz') . '  (same as primary)');
+                        $smtpPh     = $isPrimary ? 'e.g. mail.silknaviora.com' : (setting('mail_smtp_host', 'mail.silknaviora.uz') . '  (same as primary)');
+                    ?>
+                    <div class="tab-pane fade <?= $isPrimary ? 'show active' : '' ?>" id="mailAccount<?= (int) $slot['id'] ?>" role="tabpanel">
 
-                    <hr class="my-4 border-secondary-subtle opacity-50">
+                        <?php if (!$isPrimary): ?>
+                            <div class="alert bg-info-subtle text-info-emphasis border-0 rounded-3 fs-12 p-3 mb-4 d-flex gap-2">
+                                <i class="ri-information-line fs-16 flex-shrink-0 mt-n1"></i>
+                                <div>Leave the server fields blank to reuse the primary account's IMAP/SMTP hosts — only fill them in when this mailbox is hosted somewhere else.</div>
+                            </div>
+                        <?php endif; ?>
 
-                    <!-- Outgoing Mail Server -->
-                    <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Outgoing Server (SMTP)</h6>
-                    <div class="row g-3">
-                        <div class="col-md-8">
-                            <label class="form-label fw-medium fs-13">SMTP Hostname</label>
-                            <input type="text" name="mail_smtp_host" class="form-control" value="<?= e(setting('mail_smtp_host', 'mail.silknaviora.uz')) ?>" placeholder="e.g. mail.silknaviora.com">
-                            <div class="form-text fs-12 text-body-secondary">Used as external fallback when local routing is unavailable.</div>
+                        <!-- Identity -->
+                        <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Mailbox Identity</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-medium fs-13">Account Label</label>
+                                <input type="text" name="<?= $p ?>label" class="form-control" value="<?= e(setting($p . 'label', '')) ?>" placeholder="<?= $isPrimary ? 'e.g. Info desk' : 'e.g. Bookings' ?>">
+                                <div class="form-text fs-12 text-body-secondary">Shown in the mailbox switcher. Defaults to the email address.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-medium fs-13">Sender Name</label>
+                                <input type="text" name="<?= $p ?>from_name" class="form-control" value="<?= e(setting($p . 'from_name', '')) ?>" placeholder="<?= e(setting('agency_name_en', 'Silk Naviora')) ?>">
+                                <div class="form-text fs-12 text-body-secondary">The display name recipients see on outgoing mail.</div>
+                            </div>
                         </div>
-                        <div class="col-md-4">
-                            <label class="form-label fw-medium fs-13">Port</label>
-                            <input type="number" name="mail_smtp_port" class="form-control" value="<?= e(setting('mail_smtp_port', '587')) ?>" min="1" max="65535" placeholder="587 or 465">
-                            <div class="form-text fs-12 text-body-secondary">587 (STARTTLS) or 465 (SSL).</div>
-                        </div>
-                    </div>
 
-                    <hr class="my-4 border-secondary-subtle opacity-50">
+                        <hr class="my-4 border-secondary-subtle opacity-50">
 
-                    <!-- Authentication Credentials -->
-                    <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Mailbox Credentials</h6>
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label fw-medium fs-13">Email Address</label>
-                            <input type="email" name="mail_username" class="form-control" value="<?= e(setting('mail_username', 'info@silknaviora.uz')) ?>" placeholder="info@example.com">
-                            <div class="form-text fs-12 text-body-secondary">Full email address used for server authentication.</div>
+                        <!-- Authentication Credentials -->
+                        <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Mailbox Credentials</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-medium fs-13">Email Address</label>
+                                <input type="email" name="<?= $p ?>username" class="form-control" value="<?= e(setting($p . 'username', $isPrimary ? 'info@silknaviora.uz' : '')) ?>" placeholder="<?= $isPrimary ? 'info@example.com' : 'bookings@example.com' ?>">
+                                <div class="form-text fs-12 text-body-secondary">
+                                    <?= $isPrimary
+                                        ? 'Full email address used for server authentication.'
+                                        : 'Full email address used for server authentication. Leave blank to remove this mailbox from the Email page.' ?>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-medium fs-13">Mail Password</label>
+                                <input type="password" name="<?= $p ?>password" class="form-control" value="" placeholder="<?= $hasPass ? '••••••••  (saved — leave blank to keep)' : 'Enter mailbox password' ?>" autocomplete="new-password">
+                                <div class="form-text fs-12">
+                                    <?php if ($hasPass): ?>
+                                        <span class="text-success fw-medium"><i class="ri-checkbox-circle-fill me-1"></i>Secure password retained in database.</span>
+                                    <?php else: ?>
+                                        <span class="text-body-secondary">Enter the password for this mailbox account.</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label fw-medium fs-13">Mail Password</label>
-                            <input type="password" name="mail_password" class="form-control" value="" placeholder="<?= setting('mail_password', '') !== '' ? '••••••••  (saved — leave blank to keep)' : 'Enter mailbox password' ?>" autocomplete="new-password">
-                            <div class="form-text fs-12">
-                                <?php if (setting('mail_password', '') !== ''): ?>
-                                    <span class="text-success fw-medium"><i class="ri-checkbox-circle-fill me-1"></i>Secure password retained in database.</span>
-                                <?php else: ?>
-                                    <span class="text-body-secondary">Enter the password for this mailbox account.</span>
-                                <?php endif; ?>
+
+                        <hr class="my-4 border-secondary-subtle opacity-50">
+
+                        <!-- Incoming Mail Server -->
+                        <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Incoming Server (IMAP)</h6>
+                        <div class="row g-3">
+                            <div class="col-md-8">
+                                <label class="form-label fw-medium fs-13">IMAP Hostname</label>
+                                <input type="text" name="<?= $p ?>imap_host" class="form-control" value="<?= e(setting($p . 'imap_host', $isPrimary ? 'mail.silknaviora.uz' : '')) ?>" placeholder="<?= e($hostPh) ?>">
+                                <div class="form-text fs-12 text-body-secondary">Receiving hostname for mailbox synchronization.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-medium fs-13">Port</label>
+                                <input type="number" name="<?= $p ?>imap_port" class="form-control" value="<?= e(setting($p . 'imap_port', $isPrimary ? '143' : '')) ?>" min="1" max="65535" placeholder="143 or 993">
+                                <div class="form-text fs-12 text-body-secondary">143 (TLS/Local) or 993 (SSL).</div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4 border-secondary-subtle opacity-50">
+
+                        <!-- Outgoing Mail Server -->
+                        <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Outgoing Server (SMTP)</h6>
+                        <div class="row g-3">
+                            <div class="col-md-8">
+                                <label class="form-label fw-medium fs-13">SMTP Hostname</label>
+                                <input type="text" name="<?= $p ?>smtp_host" class="form-control" value="<?= e(setting($p . 'smtp_host', $isPrimary ? 'mail.silknaviora.uz' : '')) ?>" placeholder="<?= e($smtpPh) ?>">
+                                <div class="form-text fs-12 text-body-secondary">Used as external fallback when local routing is unavailable.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-medium fs-13">Port</label>
+                                <input type="number" name="<?= $p ?>smtp_port" class="form-control" value="<?= e(setting($p . 'smtp_port', $isPrimary ? '587' : '')) ?>" min="1" max="65535" placeholder="587 or 465">
+                                <div class="form-text fs-12 text-body-secondary">587 (STARTTLS) or 465 (SSL).</div>
                             </div>
                         </div>
                     </div>
+                    <?php endforeach; ?>
                 </div>
             </div>
         </div>

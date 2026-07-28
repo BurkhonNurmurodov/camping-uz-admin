@@ -4,7 +4,11 @@ require_admin();
 require __DIR__ . '/partials/widgets.php';
 require_once __DIR__ . '/app/MailClient.php';
 
-$mailClient = new \App\MailClient();
+// Which mailbox this request is for. Every AJAX call and both compose forms carry
+// an "account" field, so a single page can talk to either mailbox without reloading.
+$mailAccounts = \App\MailClient::accounts();
+$accountId    = \App\MailClient::resolveAccountId(input('account', 0));
+$mailClient   = new \App\MailClient($accountId);
 
 // Handle AJAX GET requests
 if (isset($_GET['action'])) {
@@ -73,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     'success'   => true,
                     'message'   => $note,
                     'transport' => $transport,
+                    'from'      => $mailClient->getAddress(),
                 ]);
                 exit;
             }
@@ -156,6 +161,42 @@ require __DIR__ . '/partials/head.php';
         font-size: 15px;
         color: #1f1f1f;
         padding-left: 10px;
+    }
+
+    /* Mailbox switcher pill */
+    .gmail-account-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 260px;
+        border: 1px solid var(--gmail-border);
+        background: #ffffff;
+        border-radius: 20px;
+        padding: 5px 12px 5px 6px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #202124;
+        transition: background-color 0.15s, box-shadow 0.15s;
+    }
+    .gmail-account-switch:hover {
+        background: var(--gmail-hover);
+        box-shadow: 0 1px 3px rgba(60,64,67,0.15);
+    }
+    .gmail-account-dot {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--gmail-primary);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .gmail-account-option.active {
+        background: #e8f0fe;
     }
 
     /* Threaded conversation */
@@ -524,9 +565,45 @@ require __DIR__ . '/partials/head.php';
     <div class="gmail-header-bar">
         <div class="d-flex align-items-center gap-2">
             <i class="ri-mail-star-fill fs-24 text-primary"></i>
-            <h5 class="mb-0 fw-bold fs-18 text-dark d-none d-sm-inline">Webmail</h5>
+            <h5 class="mb-0 fw-bold fs-18 text-dark d-none d-xl-inline">Webmail</h5>
+
+            <!-- Mailbox switcher: every request below carries the selected account id -->
+            <div class="dropdown">
+                <button class="gmail-account-switch" type="button" data-bs-toggle="dropdown" data-bs-auto-close="true" aria-expanded="false" title="Switch mailbox">
+                    <span class="gmail-account-dot" id="accountSwitchDot">?</span>
+                    <span class="text-truncate" id="accountSwitchLabel">Mailbox</span>
+                    <i class="ri-arrow-down-s-line fs-16 flex-shrink-0"></i>
+                </button>
+                <ul class="dropdown-menu shadow-sm border rounded-3 py-2" style="min-width: 260px;">
+                    <li><h6 class="dropdown-header fs-11 text-uppercase fw-bold">Mail accounts</h6></li>
+                    <?php foreach ($mailAccounts as $acc): ?>
+                        <li>
+                            <button type="button" class="dropdown-item d-flex align-items-center gap-2 py-2 gmail-account-option"
+                                    data-account="<?= (int) $acc['id'] ?>"
+                                    data-address="<?= e($acc['address']) ?>"
+                                    data-label="<?= e($acc['label']) ?>"
+                                    onclick="switchAccount(<?= (int) $acc['id'] ?>)">
+                                <i class="ri-checkbox-circle-fill text-primary fs-16 gmail-account-check invisible"></i>
+                                <span class="overflow-hidden">
+                                    <span class="d-block fw-semibold fs-13 text-truncate"><?= e($acc['label']) ?></span>
+                                    <?php if ($acc['label'] !== $acc['address']): ?>
+                                        <span class="d-block text-body-secondary fs-12 text-truncate"><?= e($acc['address']) ?></span>
+                                    <?php endif; ?>
+                                </span>
+                            </button>
+                        </li>
+                    <?php endforeach; ?>
+                    <li><hr class="dropdown-divider"></li>
+                    <li>
+                        <a class="dropdown-item fs-13 d-flex align-items-center gap-2 py-2" href="integrations">
+                            <i class="ri-settings-3-line fs-16"></i>
+                            <?= count($mailAccounts) > 1 ? 'Manage mail accounts' : 'Add a second mail account' ?>
+                        </a>
+                    </li>
+                </ul>
+            </div>
         </div>
-        
+
         <div class="gmail-search-box">
             <i class="ri-search-line fs-18 text-muted"></i>
             <input type="text" id="gmailSearchInput" class="gmail-search-input" placeholder="Search mail, senders, or subjects..." oninput="filterEmails()">
@@ -684,11 +761,20 @@ require __DIR__ . '/partials/head.php';
         <form class="modal-content border-0 shadow-lg rounded-4 overflow-hidden" method="post" action="email.php" enctype="multipart/form-data">
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="send">
+            <input type="hidden" name="account" value="<?= (int) $accountId ?>" class="js-account-field">
             <div class="modal-header bg-dark text-white py-3 px-4">
                 <h5 class="modal-title fw-semibold fs-16 mb-0"><i class="ri-mail-send-line me-2 text-info"></i>New Message</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body p-4 bg-white">
+                <!-- Sending mailbox — follows the account switcher in the header -->
+                <div class="mb-2 border-bottom pb-2 d-flex align-items-center">
+                    <span class="text-muted fs-13 me-2 flex-shrink-0">From</span>
+                    <span class="fs-14 fw-medium text-dark text-truncate js-account-from"><?= e($mailAccounts[$accountId]['address'] ?? '') ?></span>
+                    <?php if (count($mailAccounts) > 1): ?>
+                        <span class="ms-auto fs-12 text-body-secondary flex-shrink-0">Switch mailbox in the header</span>
+                    <?php endif; ?>
+                </div>
                 <!-- To field + CC/BCC toggle -->
                 <div class="mb-2 border-bottom pb-2 d-flex align-items-center">
                     <span class="text-muted fs-13 me-2 flex-shrink-0">To</span>
@@ -743,11 +829,17 @@ require __DIR__ . '/partials/head.php';
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="send">
             <input type="hidden" name="to" id="replyTo">
+            <input type="hidden" name="account" value="<?= (int) $accountId ?>" class="js-account-field">
             <div class="modal-header bg-primary text-white py-3 px-4">
                 <h5 class="modal-title fw-semibold fs-16 mb-0"><i class="ri-reply-fill me-2"></i>Reply to Conversation</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body p-4 bg-white">
+                <!-- Replying mailbox -->
+                <div class="mb-2 border-bottom pb-2 d-flex align-items-center">
+                    <span class="text-muted fs-13 me-2 flex-shrink-0">From</span>
+                    <span class="fs-14 fw-medium text-dark text-truncate js-account-from"><?= e($mailAccounts[$accountId]['address'] ?? '') ?></span>
+                </div>
                 <!-- To (readonly) -->
                 <div class="mb-2 border-bottom pb-2 d-flex align-items-center">
                     <span class="text-muted fs-13 me-2 flex-shrink-0">To</span>
@@ -813,6 +905,19 @@ let allEmails = [];
 let currentEmailId = null;
 let currentFolder = 'inbox'; // 'inbox' | 'unread' | 'sent'
 let currentMessageData = null; // Stored for quoting in reply
+
+// Mailboxes configured on the Integrations page. Every request to the server
+// carries the active one, so both mailboxes are usable without a page reload.
+const MAIL_ACCOUNTS = <?= json_encode(array_values($mailAccounts), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+const ACCOUNT_STORAGE_KEY = 'webmail.account';
+let currentAccount = <?= (int) $accountId ?>;
+
+/** Build an email.php URL with the active mailbox attached. */
+function mailUrl(params) {
+    let qs = new URLSearchParams(params);
+    qs.set('account', currentAccount);
+    return 'email.php?' + qs.toString();
+}
 
 const avatarPalettes = [
     '#d93025', '#188038', '#1a73e8', '#e37400', '#8e24aa', 
@@ -895,6 +1000,9 @@ document.addEventListener('DOMContentLoaded', function() {
             
             let formData = new FormData(this);
             formData.append('ajax', '1');
+            // Send from whichever mailbox is selected right now, even if the modal
+            // was opened before the switch.
+            formData.set('account', currentAccount);
 
             // For reply: prepend quoted original into body
             if (this.closest('#replyModal') && currentMessageData) {
@@ -933,6 +1041,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.success) {
                     form.reset();
                     let msg = data.message || 'Message queued for delivery.';
+                    if (data.from && MAIL_ACCOUNTS.length > 1) msg = 'Sent from ' + data.from + '. ' + msg;
                     if (data.transport) msg += ' (via ' + data.transport + ')';
                     showGmailToast(msg, 'success', 8000);
                 } else {
@@ -978,6 +1087,51 @@ function showAttachNames(input, listId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MAILBOX SWITCHING
+// ═══════════════════════════════════════════════════════════════════
+function activeAccount() {
+    return MAIL_ACCOUNTS.find(a => a.id === currentAccount) || MAIL_ACCOUNTS[0];
+}
+
+/** Paint the switcher, the compose "From" lines and the hidden form fields. */
+function applyAccountToUi() {
+    let acc = activeAccount();
+    if (!acc) return;
+
+    document.getElementById('accountSwitchLabel').innerText = acc.label;
+    let dot = document.getElementById('accountSwitchDot');
+    dot.innerText = (acc.label || acc.address).charAt(0).toUpperCase();
+    dot.style.backgroundColor = getAvatarColor(acc.address);
+
+    document.querySelectorAll('.gmail-account-option').forEach(el => {
+        let isActive = Number(el.dataset.account) === currentAccount;
+        el.classList.toggle('active', isActive);
+        el.querySelector('.gmail-account-check').classList.toggle('invisible', !isActive);
+    });
+
+    document.querySelectorAll('.js-account-field').forEach(el => { el.value = currentAccount; });
+    document.querySelectorAll('.js-account-from').forEach(el => { el.innerText = acc.address; });
+}
+
+function switchAccount(id) {
+    id = Number(id);
+    if (!MAIL_ACCOUNTS.some(a => a.id === id) || id === currentAccount) return;
+
+    currentAccount = id;
+    try { localStorage.setItem(ACCOUNT_STORAGE_KEY, String(id)); } catch (e) { /* private mode */ }
+
+    // Nothing cached belongs to the new mailbox — drop it all and start at the Inbox.
+    allEmails = [];
+    currentEmailId = null;
+    currentMessageData = null;
+    document.getElementById('gmailSearchInput').value = '';
+    document.getElementById('sentBadge').innerText = '—';
+
+    applyAccountToUi();
+    switchFolder('inbox');
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // FOLDER SWITCHING
 // ═══════════════════════════════════════════════════════════════════
 function switchFolder(folder) {
@@ -1015,7 +1169,7 @@ function loadInbox() {
     document.getElementById('unreadBadge').innerText = '...';
     document.getElementById('inboxStatusText').innerText = 'Syncing with mail server...';
     
-    fetch('email.php?action=inbox')
+    fetch(mailUrl({ action: 'inbox' }))
         .then(res => res.json())
         .then(data => {
             document.getElementById('loadingIndicator').classList.add('d-none');
@@ -1053,7 +1207,7 @@ function loadSent() {
     document.getElementById('mail-list').innerHTML = '';
     document.getElementById('inboxStatusText').innerText = 'Loading sent messages...';
     
-    fetch('email.php?action=sent')
+    fetch(mailUrl({ action: 'sent' }))
         .then(res => res.json())
         .then(data => {
             document.getElementById('loadingIndicator').classList.add('d-none');
@@ -1171,7 +1325,7 @@ function readEmail(id) {
         document.getElementById('detailAttachmentsContainer').classList.add('d-none');
     }
     
-    fetch('email.php?action=thread&id=' + id + '&folder=INBOX')
+    fetch(mailUrl({ action: 'thread', id: id, folder: 'INBOX' }))
         .then(res => res.json())
         .then(data => {
             if (data.error) {
@@ -1200,7 +1354,7 @@ function readSentEmail(id) {
     document.getElementById('detailBody').innerHTML = '<div class="text-center my-5 py-5"><div class="spinner-border text-primary my-2" role="status"></div><div class="text-muted fs-14 mt-2">Opening sent message...</div></div>';
     
     let sentFolder = 'Sent'; // Default; the server auto-detects
-    fetch('email.php?action=thread&id=' + id + '&folder=' + encodeURIComponent(sentFolder))
+    fetch(mailUrl({ action: 'thread', id: id, folder: sentFolder }))
         .then(res => res.json())
         .then(data => {
             if (data.error) {
@@ -1502,7 +1656,7 @@ function deleteFromList(id) {
     document.getElementById('inboxBadge').innerText = allEmails.length;
     document.getElementById('unreadBadge').innerText = allEmails.filter(m => m.isUnread).length;
     
-    fetch('email.php?action=delete&id=' + id)
+    fetch(mailUrl({ action: 'delete', id: id }))
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
@@ -1524,7 +1678,7 @@ document.getElementById('deleteEmailBtn').addEventListener('click', function() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>';
     
-    fetch('email.php?action=delete&id=' + currentEmailId)
+    fetch(mailUrl({ action: 'delete', id: currentEmailId }))
         .then(res => res.json())
         .then(data => {
             btn.disabled = false;
@@ -1550,7 +1704,7 @@ document.getElementById('deleteEmailBtn').addEventListener('click', function() {
 document.getElementById('markUnreadBtn').addEventListener('click', function() {
     if (!currentEmailId) return;
     
-    fetch('email.php?action=mark_unread&id=' + currentEmailId)
+    fetch(mailUrl({ action: 'mark_unread', id: currentEmailId }))
         .then(res => res.json())
         .then(data => {
             if (data.success) {
@@ -1566,7 +1720,19 @@ document.getElementById('markUnreadBtn').addEventListener('click', function() {
 // ═══════════════════════════════════════════════════════════════════
 // BOOT
 // ═══════════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', loadInbox);
+document.addEventListener('DOMContentLoaded', function () {
+    // ?account=N wins (shareable link), otherwise the last mailbox this browser used.
+    let requested = new URLSearchParams(window.location.search).get('account');
+    if (requested === null) {
+        try { requested = localStorage.getItem(ACCOUNT_STORAGE_KEY); } catch (e) { requested = null; }
+    }
+    if (requested !== null && MAIL_ACCOUNTS.some(a => a.id === Number(requested))) {
+        currentAccount = Number(requested);
+    }
+
+    applyAccountToUi();
+    loadInbox();
+});
 </script>
 
 <?php require __DIR__ . '/partials/foot.php'; ?>
