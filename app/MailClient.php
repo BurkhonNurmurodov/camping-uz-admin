@@ -20,6 +20,8 @@ class MailClient {
     private $smtpPort;
     private int $accountId;
     private string $fromName;
+    /** "host:port" as configured, kept after a fallback overwrites the live values. */
+    private string $configuredEndpoint = '';
     private ?string $connectionError = null;
     private ?string $sentFolderCache = null;
     private ?string $lastTransport = null;
@@ -124,6 +126,7 @@ class MailClient {
         }
 
         $this->imapPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}INBOX';
+        $this->configuredEndpoint = $this->imapHost . ':' . $this->imapPort;
         $this->smtpHost = (string) $this->serverSetting('smtp_host', getenv('SMTP_HOST') ?: 'mail.silknaviora.com');
         $this->smtpPort = (int) $this->serverSetting('smtp_port', getenv('SMTP_PORT') ?: 587);
         $this->fromName = (string) $this->accountSetting('from_name', setting('agency_name_en', 'Silk Naviora'));
@@ -188,37 +191,235 @@ class MailClient {
     // ─── IMAP Connection (Lazy-loaded) ───────────────────────────────
 
     private function requireMailbox(): Mailbox {
-        if (!$this->mailbox instanceof Mailbox) {
+        if ($this->mailbox instanceof Mailbox) {
+            return $this->mailbox;
+        }
+
+        if (function_exists('imap_timeout')) {
+            imap_timeout(IMAP_OPENTIMEOUT, 5);
+            imap_timeout(IMAP_READTIMEOUT, 10);
+            imap_timeout(IMAP_WRITETIMEOUT, 10);
+        }
+        if (!class_exists(Mailbox::class)) {
+            throw new \RuntimeException('The php-imap library is not installed on this server.');
+        }
+        if (!\extension_loaded('imap')) {
+            throw new \RuntimeException('The PHP "imap" extension is not enabled. Install it with "sudo apt install php-imap".');
+        }
+
+        $errors = [];
+        foreach ($this->imapCandidates() as $i => $endpoint) {
+            $path = $this->imapPathFor($endpoint, 'INBOX');
             try {
-                if (function_exists('imap_timeout')) {
-                    imap_timeout(IMAP_OPENTIMEOUT, 5);
-                    imap_timeout(IMAP_READTIMEOUT, 10);
-                    imap_timeout(IMAP_WRITETIMEOUT, 10);
+                $mailbox = new Mailbox($path, $this->login, $this->password, $this->attachmentsDir());
+                // retriesNum = 1: left at the default, c-client replays a rejected
+                // LOGIN three times inside a single imap_open, so one page load with
+                // a stale password counts as three failures against the fail2ban
+                // dovecot jail — and that ban takes SMTP down with it.
+                $mailbox->setConnectionArgs(CL_EXPUNGE, 1);
+                $mailbox->getImapStream(); // Mailbox is lazy — this is what actually connects.
+
+                // Everything else (folder paths, imap_append to Sent) is built from
+                // these, so the endpoint that worked becomes the one we use.
+                $this->imapHost  = $endpoint['host'];
+                $this->imapPort  = $endpoint['port'];
+                $this->imapFlags = $endpoint['flags'];
+                $this->imapPath  = $path;
+                if ($i > 0) {
+                    error_log("IMAP: configured endpoint failed, connected via {$endpoint['host']}:{$endpoint['port']}{$endpoint['flags']}");
+                    $this->rememberEndpoint($endpoint);
                 }
-                if (!class_exists(Mailbox::class)) {
-                    throw new \RuntimeException('The php-imap library is not installed on this server.');
-                }
-                if (!\extension_loaded('imap')) {
-                    throw new \RuntimeException('The PHP "imap" extension is not enabled. Install it with "sudo apt install php-imap".');
-                }
-                $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
-                if (!is_dir($attachmentsDir)) {
-                    @mkdir($attachmentsDir, 0777, true);
-                }
-                @chmod($attachmentsDir, 0777);
-                $this->mailbox = new Mailbox(
-                    $this->imapPath,
-                    $this->login,
-                    $this->password,
-                    (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null
-                );
-                $this->mailbox->setConnectionArgs(CL_EXPUNGE);
+                return $this->mailbox = $mailbox;
             } catch (\Throwable $e) {
-                $this->connectionError = $e->getMessage();
-                throw new \RuntimeException('IMAP mailbox is unavailable. Details: ' . $this->connectionError, 0, $e);
+                $message = $e->getMessage();
+                $errors[] = "{$endpoint['host']}:{$endpoint['port']}{$endpoint['flags']} -> " . $this->firstLine($message);
+
+                // Stop the moment the server rejects the credentials. Hammering it
+                // with the same wrong password across every endpoint is what trips
+                // the fail2ban dovecot jail, and a ban takes SMTP down with it.
+                if (!$this->isRetryableImapError($message)) {
+                    $this->connectionError = $message;
+                    throw new \RuntimeException('IMAP mailbox is unavailable. Details: ' . $this->firstLine($message), 0, $e);
+                }
             }
         }
-        return $this->mailbox;
+
+        $this->connectionError = implode(' | ', $errors);
+        throw new \RuntimeException("IMAP mailbox is unavailable. Tried:\n" . implode("\n", array_unique($errors)));
+    }
+
+    /** Shared attachment sink for every Mailbox this client opens. */
+    private function attachmentsDir(): ?string {
+        $dir = __DIR__ . '/../assets/mail_attachments';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        @chmod($dir, 0777);
+        return (is_dir($dir) && is_writable($dir)) ? $dir : null;
+    }
+
+    private function imapPathFor(array $endpoint, string $folder): string {
+        return '{' . $endpoint['host'] . ':' . $endpoint['port'] . '/imap' . $endpoint['flags'] . '}' . $folder;
+    }
+
+    /** Encryption flags that suit a host/port pair. */
+    private function flagsFor(string $host, int $port): string {
+        if (in_array(strtolower(trim($host)), ['127.0.0.1', 'localhost', '::1'], true)) {
+            return '/notls';
+        }
+        if ($port === 143)  { return '/tls/novalidate-cert'; }
+        if ($port === 993)  { return '/ssl/novalidate-cert'; }
+        return '/novalidate-cert';
+    }
+
+    /**
+     * Endpoints to try, best first.
+     *
+     * The configured one always leads. The rest exist because the two ways a mail
+     * server commonly refuses a connection are opposites — plaintext is rejected
+     * ("Server disables LOGIN"), or the TLS handshake never completes ("SSL
+     * negotiation failed") — and no single fixed choice survives both. Only
+     * transport-level failures advance the list; see requireMailbox().
+     *
+     * @return list<array{host:string, port:int, flags:string}>
+     */
+    private function imapCandidates(): array {
+        $candidates = [];
+        $add = function (string $host, int $port, ?string $flags = null) use (&$candidates): void {
+            $host = trim($host);
+            if ($host === '' || $port < 1) {
+                return;
+            }
+            $entry = ['host' => $host, 'port' => $port, 'flags' => $flags ?? $this->flagsFor($host, $port)];
+            foreach ($candidates as $existing) {
+                if ($existing === $entry) {
+                    return;
+                }
+            }
+            $candidates[] = $entry;
+        };
+
+        // 1. Whatever worked last time for this exact configuration, so a working
+        //    fallback does not re-pay for the failing attempts on every request.
+        if ($cached = $this->cachedEndpoint()) {
+            $add($cached['host'], $cached['port'], $cached['flags']);
+        }
+
+        // 2. The configured endpoint.
+        $add($this->imapHost, $this->imapPort, $this->imapFlags);
+
+        // 3. Same host, the other encryption. Covers a local Dovecot that refuses
+        //    plaintext, and one whose STARTTLS certificate OpenSSL 3 won't accept.
+        $add($this->imapHost, $this->imapPort, $this->imapPort === 993 ? '/ssl/novalidate-cert' : '/tls/novalidate-cert');
+        // Plaintext is only worth trying off 993 — that port begins the TLS
+        // handshake immediately, so an unencrypted client is never understood.
+        if ($this->imapPort !== 993 && strcasecmp($this->imapFlags, '/notls') !== 0) {
+            $add($this->imapHost, $this->imapPort, '/notls');
+        }
+
+        // 4. The mailbox's own mail server over the public interface. When the local
+        //    daemon is unreachable or locked down, this is the same server reached
+        //    the way any desktop mail client reaches it.
+        $public = $this->publicMailHost();
+        $add($public, 993);
+        $add($public, 143);
+
+        return $candidates;
+    }
+
+    /** Transport or policy problems worth retrying on another endpoint. */
+    private function isRetryableImapError(string $message): bool {
+        $needles = [
+            'ssl negotiation failed',
+            'server disables login',
+            'no recognized sasl authenticator',
+            'plaintext authentication',
+            // c-client refuses to send credentials over a link it considers unsafe
+            // ("SECURITY PROBLEM: insecure server advertised AUTH=PLAIN"). No password
+            // was offered, so this is a transport verdict — retry with encryption.
+            'security problem',
+            'insecure server',
+            'privacyrequired',
+            'certificate',
+            'connection refused',
+            'can\'t connect',
+            'cannot connect',
+            'connection failed',
+            'no such host',
+            'unable to connect',
+            'timed out',
+            'timeout',
+            'connection reset',
+            'temporarily unavailable',
+        ];
+        $message = strtolower($message);
+        foreach ($needles as $needle) {
+            if (strpos($message, $needle) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * php-imap wraps imap_errors() as a JSON array, so an unmodified message reaches
+     * the operator as `["Server disables LOGIN, ..."]`. Unwrap it — these strings are
+     * the entire diagnostic surface for a mail problem.
+     */
+    private function firstLine(string $message): string {
+        $decoded = json_decode($message, true);
+        if (is_array($decoded)) {
+            $parts = array_filter(array_map(
+                static fn($p): string => trim((string) $p),
+                array_unique($decoded)
+            ));
+            if ($parts) {
+                return implode('; ', $parts);
+            }
+        }
+        $line = trim(strtok($message, "\n") ?: $message);
+        return $line !== '' ? $line : trim($message);
+    }
+
+    /** Setting key holding the last endpoint that worked for this account. */
+    private function endpointCacheKey(): string {
+        return self::ACCOUNT_PREFIXES[$this->accountId] . 'imap_resolved';
+    }
+
+    /**
+     * The remembered endpoint, but only while it still belongs to the currently
+     * configured host/port — editing those on the Integrations page must take
+     * effect immediately, not lose to a stale cache.
+     */
+    private function cachedEndpoint(): ?array {
+        $raw = (string) setting($this->endpointCacheKey(), '');
+        if ($raw === '') {
+            return null;
+        }
+        $data = json_decode($raw, true);
+        if (!is_array($data) || ($data['for'] ?? null) !== $this->configuredEndpoint) {
+            return null;
+        }
+        if (empty($data['host']) || empty($data['port'])) {
+            return null;
+        }
+        return ['host' => (string) $data['host'], 'port' => (int) $data['port'], 'flags' => (string) ($data['flags'] ?? '')];
+    }
+
+    private function rememberEndpoint(array $endpoint): void {
+        if (!function_exists('set_setting')) {
+            return;
+        }
+        try {
+            set_setting($this->endpointCacheKey(), json_encode([
+                'for'   => $this->configuredEndpoint,
+                'host'  => $endpoint['host'],
+                'port'  => $endpoint['port'],
+                'flags' => $endpoint['flags'],
+            ]));
+        } catch (\Throwable $e) {
+            error_log('Could not cache IMAP endpoint: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -230,19 +431,24 @@ class MailClient {
      */
     private function folderMailbox(string $folder): Mailbox {
         $folder = $folder === '' ? 'INBOX' : $folder;
+        // Resolve the working endpoint first (cached after the first call): the folder
+        // path below is built from it, so opening a folder before INBOX would
+        // otherwise use the configured endpoint even when only a fallback connects.
+        $inbox = $this->requireMailbox();
         if (strcasecmp($folder, 'INBOX') === 0) {
-            return $this->requireMailbox();
+            return $inbox;
         }
         if (isset($this->folderMailboxes[$folder])) {
             return $this->folderMailboxes[$folder];
         }
-        $attachmentsDir = __DIR__ . '/../assets/mail_attachments';
-        $serverPath = '{' . $this->imapHost . ':' . $this->imapPort . '/imap' . $this->imapFlags . '}';
         return $this->folderMailboxes[$folder] = new Mailbox(
-            $serverPath . $folder,
+            $this->imapPathFor(
+                ['host' => $this->imapHost, 'port' => $this->imapPort, 'flags' => $this->imapFlags],
+                $folder
+            ),
             $this->login,
             $this->password,
-            (is_dir($attachmentsDir) && is_writable($attachmentsDir)) ? $attachmentsDir : null
+            $this->attachmentsDir()
         );
     }
 

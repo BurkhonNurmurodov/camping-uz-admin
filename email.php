@@ -1335,12 +1335,27 @@ function readEmail(id) {
 
             populateThreadReader(data, id);
 
-            // Mark as read in local cache
-            let cached = allEmails.find(e => e.id == id);
-            if (cached && cached.isUnread) {
-                cached.isUnread = 0;
-                document.getElementById('unreadBadge').innerText = allEmails.filter(m => m.isUnread).length;
+            // Mark as read in local cache and immediately update UI
+            if (Array.isArray(data)) {
+                data.forEach(msg => {
+                    let cached = allEmails.find(e => e.id == msg.id);
+                    if (cached && cached.isUnread) {
+                        cached.isUnread = 0;
+                    }
+                });
             }
+            let cachedAnchor = allEmails.find(e => e.id == id);
+            if (cachedAnchor && cachedAnchor.isUnread) {
+                cachedAnchor.isUnread = 0;
+            }
+            let unreadCount = allEmails.filter(m => m.isUnread).length;
+            if (document.getElementById('unreadBadge')) {
+                document.getElementById('unreadBadge').innerText = unreadCount;
+            }
+            if (document.getElementById('inboxStatusText') && currentFolder === 'inbox') {
+                document.getElementById('inboxStatusText').innerText = `${allEmails.length} messages · ${unreadCount} unread`;
+            }
+            renderEmails();
         })
         .catch(err => {
             document.getElementById('detailBody').innerHTML = '<div class="alert alert-danger my-4">Network error communicating with mail server.</div>';
