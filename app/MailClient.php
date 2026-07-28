@@ -497,6 +497,28 @@ class MailClient {
     }
 
     /**
+     * True when the configured SMTP host is this same machine — which is the case for
+     * mail.silknaviora.com, since it resolves back to the server's own public IP.
+     * Unresolvable hosts count as external so a typo fails loudly instead of quietly
+     * falling through to the local queue.
+     */
+    private function smtpHostIsThisServer(): bool {
+        $host = strtolower(trim($this->smtpHost));
+        if ($host === '' || in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+            return true;
+        }
+        $ip = @gethostbyname($this->smtpHost);
+        if ($ip === $this->smtpHost) {
+            return false; // did not resolve
+        }
+        $ownAddresses = array_filter([
+            $_SERVER['SERVER_ADDR'] ?? null,
+            @gethostbyname(@gethostname() ?: 'localhost'),
+        ]);
+        return in_array($ip, $ownAddresses, true);
+    }
+
+    /**
      * Ordered list of delivery transports.
      *
      * Local transports come first and the configured public hostname comes last:
@@ -506,6 +528,22 @@ class MailClient {
      * it is only worth trying once everything local has failed.
      */
     private function buildSendStrategies(bool $hasAuth): array {
+        // If the operator configured a genuinely external relay, that is a deliberate
+        // choice to stop delivering direct-to-MX from this box. Use it exclusively —
+        // falling back to the local queue would silently undo it and reproduce the
+        // "reported as sent, never arrives" behaviour the relay was meant to fix.
+        if ($hasAuth && !$this->smtpHostIsThisServer()) {
+            return [[
+                'name'    => "Relay ({$this->smtpHost}:{$this->smtpPort})",
+                'type'    => 'smtp',
+                'host'    => $this->smtpHost,
+                'port'    => $this->smtpPort,
+                'auth'    => true,
+                'secure'  => ($this->smtpPort === 465 ? PHPMailer::ENCRYPTION_SMTPS : ($this->smtpPort === 587 ? PHPMailer::ENCRYPTION_STARTTLS : '')),
+                'autotls' => true,
+            ]];
+        }
+
         $strategies = [];
         $seen = [];
 
