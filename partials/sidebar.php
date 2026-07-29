@@ -75,6 +75,18 @@ $logoLight = setting('logo_image_light');
                         <span class="pe-nav-content">About page</span>
                     </a>
                 </li>
+                <li class="pe-slide">
+                    <a href="<?= BASE_PATH ?>/privacy" class="pe-nav-link<?= $is('privacy') ?>">
+                        <i class="ri-shield-keyhole-line pe-nav-icon"></i>
+                        <span class="pe-nav-content">Privacy Policy</span>
+                    </a>
+                </li>
+                <li class="pe-slide">
+                    <a href="<?= BASE_PATH ?>/terms" class="pe-nav-link<?= $is('terms') ?>">
+                        <i class="ri-file-text-line pe-nav-icon"></i>
+                        <span class="pe-nav-content">Booking Terms</span>
+                    </a>
+                </li>
 
                 <li class="pe-menu-title">Inbox</li>
                 <li class="pe-slide">

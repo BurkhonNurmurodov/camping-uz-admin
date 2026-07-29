@@ -518,11 +518,14 @@ class MailClient {
         }
         try {
             $mailbox = $this->requireMailbox();
-            $mailsIds = $mailbox->searchMailbox('UNSEEN');
-            if (!$mailsIds) {
+            // Check recent messages (both read and unread) so notifications still fire even if previewed on another device/app
+            $allIds = $mailbox->searchMailbox('ALL');
+            if (!$allIds) {
                 return 0;
             }
-            sort($mailsIds);
+            rsort($allIds);
+            $mailsIds = array_slice($allIds, 0, 20);
+            sort($mailsIds); // Send notifications in chronological order
             
             $prefix = self::ACCOUNT_PREFIXES[$this->accountId] ?? 'mail_';
             $notifiedKey = 'notified_uids_' . trim($prefix, '_');
@@ -535,7 +538,7 @@ class MailClient {
             $now = time();
             
             foreach ($mailsIds as $id) {
-                if (in_array((int) $id, $notifiedIds, true)) {
+                if (in_array((int) $id, $notifiedIds, false) || in_array((string) $id, $notifiedIds, false)) {
                     continue;
                 }
                 
@@ -543,7 +546,7 @@ class MailClient {
                     $mail = $mailbox->getMail($id, false);
                     $mailTime = strtotime($mail->date ?: 'now');
                     
-                    // Do not send Telegram notifications for existing unread messages older than 48 hours
+                    // Do not send Telegram notifications for older existing messages (>48 hours old)
                     if ($now - $mailTime > 172800) {
                         $notifiedIds[] = (int) $id;
                         $updated = true;
@@ -569,10 +572,22 @@ class MailClient {
                         $text .= "\n\n" . tg_escape($snippet . (mb_strlen(strip_tags((string) ($mail->textPlain ?: $mail->textHtml))) > 300 ? '…' : ''));
                     }
                     
-                    if (telegram_notify($text)) {
+                    $res = function_exists('telegram_send') ? telegram_send($text) : ['ok' => false, 'error' => 'telegram_send not found'];
+                    if (!empty($res['ok'])) {
                         $notifiedIds[] = (int) $id;
                         $updated = true;
                         $count++;
+                    } else {
+                        error_log("Telegram group email notification failed for mail ID {$id}: " . ($res['error'] ?? 'unknown'));
+                        // Fallback attempt without HTML formatting if entities failed to parse
+                        if (isset($res['error']) && stripos($res['error'], 'parse entities') !== false) {
+                            $plainText = strip_tags($text);
+                            if (telegram_notify($plainText)) {
+                                $notifiedIds[] = (int) $id;
+                                $updated = true;
+                                $count++;
+                            }
+                        }
                     }
                 } catch (\Throwable $e) {
                     continue;
