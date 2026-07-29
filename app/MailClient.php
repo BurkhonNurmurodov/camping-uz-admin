@@ -510,10 +510,110 @@ class MailClient {
         }
     }
 
+    // ─── Telegram Group Notifications for New Emails ─────────────────
+
+    public function notifyNewEmails(): int {
+        if (!function_exists('telegram_enabled') || !telegram_enabled()) {
+            return 0;
+        }
+        try {
+            $mailbox = $this->requireMailbox();
+            $mailsIds = $mailbox->searchMailbox('UNSEEN');
+            if (!$mailsIds) {
+                return 0;
+            }
+            sort($mailsIds);
+            
+            $prefix = self::ACCOUNT_PREFIXES[$this->accountId] ?? 'mail_';
+            $notifiedKey = 'notified_uids_' . trim($prefix, '_');
+            $notifiedJson = setting($notifiedKey, '[]');
+            $notifiedIds = is_string($notifiedJson) ? (json_decode($notifiedJson, true) ?: []) : [];
+            if (!is_array($notifiedIds)) { $notifiedIds = []; }
+            
+            $count = 0;
+            $updated = false;
+            $now = time();
+            
+            foreach ($mailsIds as $id) {
+                if (in_array((int) $id, $notifiedIds, true)) {
+                    continue;
+                }
+                
+                try {
+                    $mail = $mailbox->getMail($id, false);
+                    $mailTime = strtotime($mail->date ?: 'now');
+                    
+                    // Do not send Telegram notifications for existing unread messages older than 48 hours
+                    if ($now - $mailTime > 172800) {
+                        $notifiedIds[] = (int) $id;
+                        $updated = true;
+                        continue;
+                    }
+                    
+                    $fromStr = trim($mail->fromName ? ($mail->fromName . ' <' . $mail->fromAddress . '>') : $mail->fromAddress);
+                    $toStr   = trim($mail->toString ?: ($this->login ?: 'Admin'));
+                    $subjStr = trim((string) ($mail->subject ?: '(No Subject)'));
+                    $dateStr = date('F j, Y | g:i A', $mailTime);
+                    
+                    $snippet = mb_substr(strip_tags((string) ($mail->textPlain ?: $mail->textHtml)), 0, 300);
+                    $snippet = trim(preg_replace('/\s+/', ' ', $snippet));
+                    
+                    $text = implode("\n", [
+                        '📧 <b>New Email Received</b>',
+                        '<b>From:</b> ' . tg_escape($fromStr),
+                        '<b>To:</b> ' . tg_escape($toStr),
+                        '<b>Subject:</b> ' . tg_escape($subjStr),
+                        '<b>DateTime:</b> ' . tg_escape($dateStr),
+                    ]);
+                    if ($snippet !== '') {
+                        $text .= "\n\n" . tg_escape($snippet . (mb_strlen(strip_tags((string) ($mail->textPlain ?: $mail->textHtml))) > 300 ? '…' : ''));
+                    }
+                    
+                    if (telegram_notify($text)) {
+                        $notifiedIds[] = (int) $id;
+                        $updated = true;
+                        $count++;
+                    }
+                } catch (\Throwable $e) {
+                    continue;
+                }
+            }
+            
+            if ($updated && function_exists('set_setting')) {
+                if (count($notifiedIds) > 300) {
+                    $notifiedIds = array_slice($notifiedIds, -300);
+                }
+                set_setting($notifiedKey, json_encode(array_values(array_unique($notifiedIds))));
+            }
+            
+            return $count;
+        } catch (\Throwable $e) {
+            error_log("notifyNewEmails Error: " . $e->getMessage());
+            return 0;
+        }
+    }
+
+    public static function notifyAllNewEmails(): int {
+        if (!function_exists('telegram_enabled') || !telegram_enabled()) {
+            return 0;
+        }
+        $total = 0;
+        foreach (array_keys(self::accounts()) as $accountId) {
+            try {
+                $client = new self($accountId);
+                $total += $client->notifyNewEmails();
+            } catch (\Throwable $e) {
+                error_log("notifyAllNewEmails Error for account {$accountId}: " . $e->getMessage());
+            }
+        }
+        return $total;
+    }
+
     // ─── Inbox ───────────────────────────────────────────────────────
 
     public function getInbox($page = 1, $perPage = 20) {
         try {
+            $this->notifyNewEmails();
             $mailbox = $this->requireMailbox();
             $mailsIds = $mailbox->searchMailbox('ALL');
             if (!$mailsIds) {
