@@ -15,6 +15,43 @@ if (isset($_GET['action'])) {
     if (session_status() === PHP_SESSION_ACTIVE) {
         session_write_close();
     }
+    if ($_GET['action'] === 'download_attachment') {
+        $fileBasename = basename($_GET['file'] ?? '');
+        $realName = $_GET['name'] ?? $fileBasename;
+        $mime = $_GET['mime'] ?? 'application/octet-stream';
+        
+        $targetDir = realpath(__DIR__ . '/assets/mail_attachments');
+        $fullPath = realpath($targetDir . '/' . $fileBasename);
+        
+        if (!$fullPath || !str_starts_with($fullPath, $targetDir) || !is_file($fullPath)) {
+            http_response_code(404);
+            die("Attachment file not found on disk.");
+        }
+        
+        if ($mime === 'application/octet-stream' || empty($mime)) {
+            $finfo = new finfo(FILEINFO_MIME_TYPE);
+            $detectedMime = $finfo->file($fullPath);
+            if ($detectedMime && $detectedMime !== 'application/octet-stream') {
+                $mime = $detectedMime;
+            }
+        }
+        
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        
+        header('Content-Description: File Transfer');
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: attachment; filename="' . addcslashes($realName, '"') . '"; filename*=UTF-8\'\'' . rawurlencode($realName));
+        header('Content-Transfer-Encoding: binary');
+        header('Expires: 0');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+        header('Pragma: public');
+        header('Content-Length: ' . filesize($fullPath));
+        
+        readfile($fullPath);
+        exit;
+    }
     header('Content-Type: application/json');
     try {
         if ($_GET['action'] === 'inbox') {
@@ -1419,7 +1456,7 @@ function buildAttachmentRow(attachments) {
         if (att.url) {
             a.href = att.url;
             a.target = '_blank';
-            a.setAttribute('download', '');
+            a.setAttribute('download', att.name || '');
             a.rel = 'noopener noreferrer';
         } else {
             a.href = '#';
@@ -1612,7 +1649,7 @@ function populateEmailReader(data) {
             data.attachments.forEach(att => {
                 let sizeStr = att.size ? ` (${Math.round(att.size / 1024)} KB)` : '';
                 let downloadLink = att.url ? att.url : '#';
-                let target = att.url ? 'target="_blank" download' : 'onclick="alert(\'Attachment file not available.\'); return false;"';
+                let target = att.url ? `target="_blank" download="${att.name}"` : 'onclick="alert(\'Attachment file not available.\'); return false;"';
                 attHtml += `
                 <a href="${downloadLink}" ${target} class="btn btn-outline-secondary d-flex align-items-center gap-2 px-3 py-2 text-decoration-none rounded-3 bg-light-subtle text-dark border shadow-sm">
                     <i class="ri-file-download-fill fs-20 text-primary"></i>

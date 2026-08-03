@@ -720,18 +720,20 @@ class MailClient {
                     $filePath = $att->filePath ?: '';
                     $fileName = $att->name ?: ('attachment_' . ($att->id ?: uniqid()));
                     
-                    $url = '';
+                    $storedName = '';
                     if (!empty($filePath) && file_exists($filePath)) {
-                        if (($pos = strpos($filePath, 'assets/mail_attachments/')) !== false) {
-                            $url = substr($filePath, $pos);
-                        } else {
-                            $url = 'assets/mail_attachments/' . basename($filePath);
-                        }
+                        $storedName = basename($filePath);
                     } else {
                         $standardPath = __DIR__ . '/../assets/mail_attachments/' . $fileName;
                         if (file_exists($standardPath)) {
-                            $url = 'assets/mail_attachments/' . $fileName;
+                            $storedName = basename($standardPath);
                         }
+                    }
+                    
+                    $mime = $att->mimeType ?? ($att->mime ?? 'application/octet-stream');
+                    $url = '';
+                    if (!empty($storedName)) {
+                        $url = 'email.php?action=download_attachment&file=' . urlencode($storedName) . '&name=' . urlencode($fileName) . '&mime=' . urlencode($mime);
                     }
                     
                     $formattedAttachments[] = [
@@ -739,7 +741,7 @@ class MailClient {
                         'name' => $fileName,
                         'size' => $att->sizeInBytes ?? ((!empty($filePath) && file_exists($filePath)) ? filesize($filePath) : 0),
                         'url'  => $url,
-                        'mime' => $att->mimeType ?? ($att->mime ?? 'application/octet-stream')
+                        'mime' => $mime
                     ];
                 }
             }
