@@ -13,3 +13,9 @@ define('IS_ADMIN_APP', true);
 
 // Load the main application bootstrap
 require __DIR__ . '/../../camping-uz/app/bootstrap.php';
+
+// Admin UI component library. Loaded here rather than from partials/head.php
+// so pages can compose header actions (buttons, badges) while assembling
+// their $page array — i.e. before the layout is rendered.
+require_once __DIR__ . '/../partials/ui.php';
+require_once __DIR__ . '/../partials/nav.php';

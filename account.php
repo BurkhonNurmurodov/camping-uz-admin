@@ -1,150 +1,154 @@
 <?php
 require __DIR__ . '/app/bootstrap.php';
 require_admin();
-require __DIR__ . '/partials/widgets.php';
 
 $me = admin_user();
+$errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
-    $action = input('action', 'credentials');
 
-    if ($action === 'credentials') {
-        $cur = (string) input('current_password', '');
-        $newUser = trim((string) input('new_username', ''));
-        $newPass = (string) input('new_password', '');
-        $confirm = (string) input('confirm_password', '');
+    $cur     = (string) input('current_password', '');
+    $newUser = trim((string) input('new_username', ''));
+    $newPass = (string) input('new_password', '');
+    $confirm = (string) input('confirm_password', '');
 
-        $row = db_one('SELECT password_hash FROM admins WHERE id = ?', [$me['id']]);
-        if (!$row || !password_verify($cur, $row['password_hash'])) {
-            flash('error', 'Current password is incorrect.');
-        } elseif ($newUser === '') {
-            flash('error', 'Username cannot be empty.');
-        } elseif ($newPass !== '' && $newPass !== $confirm) {
-            flash('error', 'New passwords do not match.');
-        } elseif ($newPass !== '' && strlen($newPass) < 6) {
-            flash('error', 'New password must be at least 6 characters.');
-        } else {
-            admin_update_credentials((int) $me['id'], $newUser, $newPass !== '' ? $newPass : null);
-            flash('success', 'Administrator login credentials updated successfully.');
+    $row = db_one('SELECT password_hash FROM admins WHERE id = ?', [$me['id']]);
+
+    if (!$row || !password_verify($cur, $row['password_hash'])) {
+        $errors['current_password'] = 'That is not your current password.';
+    }
+    if ($newUser === '') {
+        $errors['new_username'] = 'A username is required.';
+    } elseif ($newUser !== $me['username'] && db_val('SELECT 1 FROM admins WHERE username = ? AND id <> ?', [$newUser, $me['id']])) {
+        $errors['new_username'] = 'That username is already taken.';
+    }
+    if ($newPass !== '') {
+        if (strlen($newPass) < 8) {
+            $errors['new_password'] = 'Use at least 8 characters.';
+        } elseif ($newPass !== $confirm) {
+            $errors['confirm_password'] = 'The two passwords do not match.';
         }
+    }
+
+    if (!$errors) {
+        admin_update_credentials((int) $me['id'], $newUser, $newPass !== '' ? $newPass : null);
+        flash('success', $newPass !== '' ? 'Username and password updated.' : 'Username updated.');
         redirect('account');
     }
+
+    flash('error', 'Nothing was changed — please check the highlighted fields.');
 }
 
-$page = ['title' => 'Admin Account', 'section' => 'System', 'active' => 'account'];
+$page = [
+    'title'    => 'Settings',
+    'subtitle' => 'Your sign-in details.',
+    'active'   => 'settings',
+    'tabs'     => admin_settings_tabs('account'),
+];
 require __DIR__ . '/partials/head.php';
+
+$err = static function (string $key) use ($errors): string {
+    return isset($errors[$key])
+        ? '<p class="error-text"><i class="ri-error-warning-line" aria-hidden="true"></i>' . e($errors[$key]) . '</p>'
+        : '';
+};
 ?>
 
-<div class="pb-5">
-    <!-- Page Title & Header -->
-    <div class="mb-4 pb-3 border-bottom">
-        <h4 class="mb-1 fw-bold">Administrator Account &amp; Security</h4>
-        <p class="text-body-secondary mb-0 fs-14">Manage session privileges, review authorization status, and update login authentication credentials.</p>
-    </div>
+<div class="row">
+    <div class="col-12 col-xl-7">
+        <div class="stack">
 
-    <!-- Section 1: Session Overview -->
-    <div class="row g-4 mb-5">
-        <div class="col-12 col-xl-4">
-            <div class="pe-xl-4">
-                <h6 class="fw-bold fs-16 mb-2 d-flex align-items-center gap-2">
-                    <i class="ri-user-star-line text-primary fs-20"></i> Active Profile &amp; Permissions
-                </h6>
-                <p class="text-body-secondary fs-13 mb-0">
-                    Your administrative account maintains complete supervisory access over tour itineraries, bookings, traveler correspondence, and core configuration tokens.
-                </p>
-            </div>
-        </div>
-
-        <div class="col-12 col-xl-8">
-            <div class="card shadow-sm border rounded-3">
-                <div class="card-body p-4 d-flex align-items-center justify-content-between flex-wrap gap-4">
-                    <div class="d-flex align-items-center gap-3">
-                        <div class="bg-primary-subtle text-primary fw-bold rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style="width: 64px; height: 64px; font-size: 24px;">
-                            <?= strtoupper(substr(e($me['username'] ?? 'A'), 0, 1)) ?>
-                        </div>
+            <section class="card">
+                <div class="card__body">
+                    <div class="row-flex row-flex--wrap">
+                        <?= ui_avatar($me['display_name'] ?? $me['username'], 'avatar--lg') ?>
                         <div>
-                            <div class="d-flex align-items-center gap-2 mb-1">
-                                <h5 class="fw-bold mb-0"><?= e($me['display_name'] ?? $me['username'] ?? 'Administrator') ?></h5>
-                                <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2 py-0 fs-11">Online</span>
-                            </div>
-                            <span class="text-body-secondary fs-13">@<?= e($me['username'] ?? 'admin') ?> &middot; System Administrator #<?= (int) ($me['id'] ?? 1) ?></span>
+                            <p class="t-lg t-semibold t-strong mb-0"><?= e($me['display_name'] ?? $me['username'] ?? 'Administrator') ?></p>
+                            <p class="t-sm t-muted mb-0">
+                                @<?= e($me['username'] ?? 'admin') ?> · Full access to every part of the panel
+                            </p>
                         </div>
-                    </div>
-
-                    <div class="d-flex align-items-center gap-2">
-                        <a href="<?= BASE_PATH ?>/dashboard" class="btn btn-sm btn-outline-secondary px-3 py-2 fw-medium d-inline-flex align-items-center gap-1">
-                            <i class="ri-dashboard-line fs-16"></i> Dashboard
-                        </a>
-                        <a href="<?= BASE_PATH ?>/logout" class="btn btn-sm btn-outline-danger px-3 py-2 fw-medium d-inline-flex align-items-center gap-1">
-                            <i class="ri-logout-box-r-line fs-16"></i> Sign Out
-                        </a>
+                        <span class="push-end"><?= ui_status('Signed in', 'success') ?></span>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
+            </section>
 
-    <!-- Section 2: Security & Credentials -->
-    <div class="row g-4">
-        <div class="col-12 col-xl-4">
-            <div class="pe-xl-4">
-                <h6 class="fw-bold fs-16 mb-2 d-flex align-items-center gap-2">
-                    <i class="ri-shield-keyhole-line text-warning fs-20"></i> Authentication Update
-                </h6>
-                <p class="text-body-secondary fs-13 mb-3">
-                    Change your username or set a new password. To protect against unauthorized alterations from an unlocked terminal, entering your current valid password is required to execute changes.
-                </p>
-            </div>
-        </div>
-
-        <div class="col-12 col-xl-8">
-            <form method="post" action="account">
+            <form method="post" action="<?= url('account') ?>">
                 <?= csrf_field() ?>
-                <input type="hidden" name="action" value="credentials">
-
-                <div class="card shadow-sm border rounded-3 overflow-hidden">
-                    <div class="card-body p-4">
-                        <!-- Verification Step -->
-                        <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">Security Verification</h6>
-                        <div class="mb-4">
-                            <label class="form-label fw-medium fs-13">Current Password <span class="text-danger">*</span></label>
-                            <input type="password" name="current_password" class="form-control" placeholder="Enter existing password to confirm identity" required>
-                            <div class="form-text fs-12 text-body-secondary">Required before saving any authentication updates below.</div>
+                <section class="card">
+                    <div class="card__head">
+                        <div>
+                            <h2 class="card__title">Change sign-in details</h2>
+                            <p class="card__sub">Confirm your current password to make any change.</p>
                         </div>
+                    </div>
+                    <div class="card__body">
+                        <?php ui_field('current_password', 'Current password', [
+                            'type'     => 'password',
+                            'required' => true,
+                            'placeholder' => 'Your password right now',
+                            'attrs'    => ['autocomplete' => 'current-password']
+                                          + (isset($errors['current_password']) ? ['aria-invalid' => 'true'] : []),
+                        ]); ?>
+                        <?= $err('current_password') ?>
 
-                        <hr class="my-4 border-secondary-subtle opacity-50">
+                        <div class="form-section">
+                            <p class="form-section__title">New details</p>
+                            <p class="form-section__desc">Leave the password fields empty to keep your current password.</p>
 
-                        <!-- New Credentials Step -->
-                        <h6 class="fw-semibold fs-14 text-uppercase text-body-secondary mb-3">New Login Profile</h6>
-                        <div class="row g-3">
-                            <div class="col-12">
-                                <label class="form-label fw-medium fs-13">Admin Username</label>
-                                <input type="text" name="new_username" class="form-control fw-semibold" value="<?= e($me['username']) ?>" required>
-                                <div class="form-text fs-12 text-body-secondary">Unique profile identifier required at sign-in.</div>
-                            </div>
-                            
-                            <div class="col-md-6">
-                                <label class="form-label fw-medium fs-13">New Password</label>
-                                <input type="password" name="new_password" class="form-control" placeholder="Leave blank to retain current">
-                                <div class="form-text fs-12 text-body-secondary">Minimum 6 characters required if updating.</div>
-                            </div>
+                            <?php ui_field('new_username', 'Username', [
+                                'value'    => $_SERVER['REQUEST_METHOD'] === 'POST'
+                                                ? (string) input('new_username', '')
+                                                : (string) $me['username'],
+                                'required' => true,
+                                'attrs'    => ['autocomplete' => 'username']
+                                              + (isset($errors['new_username']) ? ['aria-invalid' => 'true'] : []),
+                            ]); ?>
+                            <?= $err('new_username') ?>
 
-                            <div class="col-md-6">
-                                <label class="form-label fw-medium fs-13">Confirm New Password</label>
-                                <input type="password" name="confirm_password" class="form-control" placeholder="Re-enter new password">
-                                <div class="form-text fs-12 text-body-secondary">Must match the new password exactly.</div>
+                            <div class="form-grid form-grid--2">
+                                <div>
+                                    <?php ui_field('new_password', 'New password', [
+                                        'type'        => 'password',
+                                        'placeholder' => 'At least 8 characters',
+                                        'attrs'       => ['autocomplete' => 'new-password']
+                                                         + (isset($errors['new_password']) ? ['aria-invalid' => 'true'] : []),
+                                    ]); ?>
+                                    <?= $err('new_password') ?>
+                                </div>
+                                <div>
+                                    <?php ui_field('confirm_password', 'Confirm new password', [
+                                        'type'        => 'password',
+                                        'placeholder' => 'Type it again',
+                                        'attrs'       => ['autocomplete' => 'new-password']
+                                                         + (isset($errors['confirm_password']) ? ['aria-invalid' => 'true'] : []),
+                                    ]); ?>
+                                    <?= $err('confirm_password') ?>
+                                </div>
                             </div>
                         </div>
                     </div>
-
-                    <div class="card-footer bg-body-tertiary border-top px-4 py-3 d-flex justify-content-end align-items-center">
-                        <button type="submit" class="btn btn-primary px-4 py-2 fw-semibold shadow-sm d-inline-flex align-items-center gap-2">
-                            <i class="ri-check-line fs-18"></i> Update Security Credentials
-                        </button>
+                    <div class="card__foot">
+                        <span class="push-end">
+                            <?= ui_btn('Update sign-in details', ['variant' => 'primary', 'icon' => 'ri-check-line']) ?>
+                        </span>
                     </div>
-                </div>
+                </section>
             </form>
+
+            <section class="card">
+                <div class="card__body row-flex row-flex--wrap">
+                    <div>
+                        <p class="t-medium t-strong mb-0">Sign out of the panel</p>
+                        <p class="t-sm t-muted mb-0">You will need your username and password to get back in.</p>
+                    </div>
+                    <span class="push-end">
+                        <?= ui_btn('Sign out', ['href' => url('logout'), 'variant' => 'danger-ghost', 'icon' => 'ri-logout-box-line']) ?>
+                    </span>
+                </div>
+            </section>
+
         </div>
     </div>
 </div>

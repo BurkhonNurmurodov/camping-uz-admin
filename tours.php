@@ -4,116 +4,176 @@ require_admin();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
-    $id = (int) input('id');
-    if (input('action') === 'delete') {
-        $t = db_one('SELECT poster FROM tours WHERE id=?', [$id]);
-        if ($t) { delete_upload($t['poster']); db_run('DELETE FROM tours WHERE id=?', [$id]); flash('success', 'Tour deleted.'); }
-    } elseif (input('action') === 'status') {
-        $s = input('status');
+    $id     = (int) input('id');
+    $action = input('action');
+    $back   = 'tours' . (input('status') && $action !== 'status' ? '?status=' . urlencode((string) input('status')) : '');
+
+    if ($action === 'delete') {
+        $t = db_one('SELECT poster, title_en, title_ru FROM tours WHERE id=?', [$id]);
+        if ($t) {
+            delete_upload($t['poster']);
+            db_run('DELETE FROM tours WHERE id=?', [$id]);
+            flash('success', '“' . ($t['title_en'] ?: $t['title_ru'] ?: 'Tour') . '” was deleted.');
+        }
+    } elseif ($action === 'status') {
+        $s = input('new_status');
         if (in_array($s, ['draft', 'upcoming', 'past'], true)) {
             db_run('UPDATE tours SET status=? WHERE id=?', [$s, $id]);
+            $t = db_one('SELECT title_en, title_ru FROM tours WHERE id=?', [$id]);
+            $labels = ['draft' => 'Draft', 'upcoming' => 'Upcoming', 'past' => 'Past'];
+            // The old build changed status silently, leaving the operator to
+            // guess whether it saved. Always confirm.
+            flash('success', '“' . ($t['title_en'] ?: $t['title_ru'] ?: 'Tour') . '” moved to ' . $labels[$s] . '.');
         }
+        $back = 'tours' . (input('filter') ? '?status=' . urlencode((string) input('filter')) : '');
     }
-    redirect('tours');
+    redirect($back);
 }
 
-$filter = input('status');
-$where  = in_array($filter, ['draft', 'upcoming', 'past'], true) ? 'WHERE status = ' . db()->quote($filter) : '';
+$filter = in_array(input('status'), ['draft', 'upcoming', 'past'], true) ? (string) input('status') : '';
+$where  = $filter !== '' ? 'WHERE t.status = ' . db()->quote($filter) : '';
+
 $tours = db_all(
     "SELECT t.*,
-            (SELECT COUNT(*) FROM tour_guides tg WHERE tg.tour_id=t.id) AS guides,
-            (SELECT COUNT(*) FROM registration_groups r WHERE r.tour_id=t.id) AS regs
-       FROM tours t $where ORDER BY t.sort_order, t.start_date IS NULL, t.start_date, t.id DESC"
+            (SELECT COUNT(*) FROM tour_guides tg WHERE tg.tour_id = t.id) AS guides,
+            (SELECT COUNT(*) FROM registration_groups r WHERE r.tour_id = t.id) AS regs
+       FROM tours t $where
+      ORDER BY t.sort_order, t.start_date IS NULL, t.start_date, t.id DESC"
 );
-$counts = [];
-foreach (db_all("SELECT status, COUNT(*) c FROM tours GROUP BY status") as $r) { $counts[$r['status']] = $r['c']; }
 
-$page = ['title' => 'Tours', 'section' => 'Content', 'active' => 'tours'];
+$counts = ['' => 0];
+foreach (db_all("SELECT status, COUNT(*) c FROM tours GROUP BY status") as $r) {
+    $counts[$r['status']] = (int) $r['c'];
+    $counts[''] += (int) $r['c'];
+}
+
+$page = [
+    'title'    => 'Tours',
+    'subtitle' => 'Trips shown on the public site. Drafts stay hidden until you publish them.',
+    'active'   => 'tours',
+    'actions'  => ui_btn('New tour', ['href' => url('tour-edit'), 'variant' => 'primary', 'icon' => 'ri-add-line']),
+];
 require __DIR__ . '/partials/head.php';
 
-$tabs = ['' => 'All', 'upcoming' => 'Upcoming', 'past' => 'Past', 'draft' => 'Draft'];
+$statusTone = ['draft' => 'muted', 'upcoming' => 'new', 'past' => 'muted'];
 ?>
-<div class="d-flex align-items-center mb-3 flex-wrap gap-2">
-    <ul class="nav nav-pills">
-        <?php foreach ($tabs as $k => $label): ?>
-            <li class="nav-item">
-                <a class="nav-link <?= (string) $filter === $k ? 'active' : '' ?>" href="<?= url('tours' . ($k ? '?status=' . $k : '')) ?>">
-                    <?= $label ?>
-                    <?php $c = $k === '' ? array_sum($counts) : ($counts[$k] ?? 0); ?>
-                    <span class="badge bg-light text-dark ms-1"><?= (int) $c ?></span>
-                </a>
-            </li>
-        <?php endforeach; ?>
-    </ul>
-    <a href="<?= url('tour-edit') ?>" class="btn btn-primary ms-auto"><i class="ri-add-line me-1"></i> New tour</a>
-</div>
 
-<div class="card">
-    <div class="card-body p-0">
-        <?php if (!$tours): ?>
-            <div class="text-center text-muted py-5"><i class="ri-route-line fs-1 d-block mb-2"></i>No tours here yet.</div>
-        <?php else: ?>
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                    <thead><tr><th>Tour</th><th>Dates</th><th class="text-center">Guides</th><th class="text-center">Regs</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
-                    <tbody>
-                    <?php foreach ($tours as $t):
-                        $badge = ['draft' => 'secondary', 'upcoming' => 'primary', 'past' => 'dark'][$t['status']] ?? 'secondary'; ?>
-                        <tr>
-                            <td>
-                                <div class="d-flex align-items-center gap-3">
-                                    <?php if ($t['poster']): ?>
-                                        <img src="<?= e(upload_url($t['poster'])) ?>" style="width:60px;height:45px;object-fit:cover;border-radius:6px">
-                                    <?php else: ?>
-                                        <span class="d-flex align-items-center justify-content-center bg-secondary-subtle text-secondary rounded" style="width:60px;height:45px"><i class="ri-image-line"></i></span>
-                                    <?php endif; ?>
-                                    <div>
-                                        <span class="fw-semibold"><?= e($t['title_en'] ?: $t['title_ru'] ?: 'Untitled') ?></span>
-                                        <div class="fs-12 text-muted">/<?= e($t['slug']) ?></div>
-                                    </div>
-                                </div>
-                            </td>
-                            <td class="fs-13"><?= e(format_tour_dates($t['start_date'], $t['end_date']) ?: '—') ?></td>
-                            <td class="text-center"><span class="badge bg-light text-dark"><?= (int) $t['guides'] ?></span></td>
-                            <td class="text-center"><span class="badge bg-light text-dark"><?= (int) $t['regs'] ?></span></td>
-                            <td>
-                                <form method="post" action="tours" class="d-inline">
-                                    <?= csrf_field() ?>
-                                    <input type="hidden" name="action" value="status">
-                                    <input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
-                                    <select name="status" class="form-select form-select-sm w-auto d-inline" onchange="this.form.submit()">
-                                        <?php foreach (['draft', 'upcoming', 'past'] as $s): ?>
-                                            <option value="<?= $s ?>" <?= $t['status'] === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </form>
-                            </td>
-                            <td class="text-end">
-                                <a href="<?= url('tour-edit/' . (int) $t['id']) ?>" class="btn btn-sm btn-light"><i class="ri-pencil-line"></i></a>
-                                <form method="post" action="tours" class="d-inline js-delete">
-                                    <?= csrf_field() ?>
-                                    <input type="hidden" name="action" value="delete">
-                                    <input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
-                                    <button class="btn btn-sm btn-light text-danger"><i class="ri-delete-bin-line"></i></button>
-                                </form>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        <?php endif; ?>
+<div class="toolbar">
+    <?php ui_seg(
+        [
+            ''         => ['label' => 'All',      'count' => $counts[''] ?? 0],
+            'upcoming' => ['label' => 'Upcoming', 'count' => $counts['upcoming'] ?? 0],
+            'draft'    => ['label' => 'Draft',    'count' => $counts['draft'] ?? 0],
+            'past'     => ['label' => 'Past',     'count' => $counts['past'] ?? 0],
+        ],
+        $filter,
+        static fn($v) => url('tours' . ($v !== '' ? '?status=' . $v : '')),
+        'Filter tours by status'
+    ); ?>
+    <div class="toolbar__end">
+        <?php ui_search('tourList', 'Search tours…', ['empty_id' => 'tourNoResults']); ?>
     </div>
 </div>
 
-<?php
-$page['vendor_js'] = ['libs/sweetalert2/sweetalert2.all.min.js'];
-$page['inline_js'] = <<<JS
-document.querySelectorAll('form.js-delete').forEach(function(f){
-  f.addEventListener('submit', function(e){ e.preventDefault();
-    Swal.fire({title:'Delete this tour?', text:'Registrations linked to it will be kept but unlinked.', icon:'warning', showCancelButton:true, confirmButtonText:'Delete', confirmButtonColor:'#d33'})
-      .then(function(r){ if(r.isConfirmed) f.submit(); }); });
-});
-JS;
-require __DIR__ . '/partials/foot.php';
-?>
+<div class="card">
+    <?php if (!$tours): ?>
+        <?php ui_empty(
+            'ri-route-line',
+            $filter !== '' ? 'No ' . $filter . ' tours' : 'No tours yet',
+            $filter !== ''
+                ? 'Nothing matches this filter. Try another one, or create a tour.'
+                : 'Create your first tour to start taking registrations.',
+            ui_btn('New tour', ['href' => url('tour-edit'), 'variant' => 'primary', 'icon' => 'ri-add-line'])
+        ); ?>
+    <?php else: ?>
+        <div class="table-wrap">
+            <table class="table table--stack" id="tourList">
+                <thead>
+                    <tr>
+                        <th>Tour</th>
+                        <th>Dates</th>
+                        <th class="center">Guides</th>
+                        <th class="center">Registrations</th>
+                        <th>Status</th>
+                        <th class="shrink"><span class="sr-only">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($tours as $t):
+                    $title = $t['title_en'] ?: $t['title_ru'] ?: 'Untitled tour';
+                    $editUrl = url('tour-edit/' . (int) $t['id']);
+                ?>
+                    <tr class="row-link" data-search-text="<?= e($title . ' ' . $t['title_ru'] . ' ' . $t['slug']) ?>">
+                        <td class="cell-primary">
+                            <div class="cell-media">
+                                <?= ui_thumb($t['poster'] ? upload_url($t['poster']) : null, 'ri-image-line', 'thumb--wide') ?>
+                                <span>
+                                    <a class="cell-media__title row-link__target" href="<?= e($editUrl) ?>"><?= e($title) ?></a>
+                                    <span class="cell-media__meta">/<?= e($t['slug']) ?></span>
+                                </span>
+                            </div>
+                        </td>
+
+                        <td class="nowrap" data-label="Dates">
+                            <span class="t-sm"><?= e(format_tour_dates($t['start_date'], $t['end_date']) ?: '—') ?></span>
+                        </td>
+
+                        <td class="center" data-label="Guides">
+                            <span><?= ui_badge((string) (int) $t['guides'], (int) $t['guides'] ? '' : 'outline') ?></span>
+                        </td>
+
+                        <td class="center" data-label="Registrations">
+                            <?php if ((int) $t['regs'] > 0): ?>
+                                <a href="<?= url('registrations?tour=' . (int) $t['id']) ?>"
+                                   title="View registrations for this tour">
+                                    <?= ui_badge((string) (int) $t['regs'], 'primary') ?>
+                                </a>
+                            <?php else: ?>
+                                <span><?= ui_badge('0', 'outline') ?></span>
+                            <?php endif; ?>
+                        </td>
+
+                        <td class="nowrap" data-label="Status">
+                            <form method="post" action="<?= url('tours') ?>">
+                                <?= csrf_field() ?>
+                                <input type="hidden" name="action" value="status">
+                                <input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
+                                <input type="hidden" name="filter" value="<?= e($filter) ?>">
+                                <label class="sr-only" for="st<?= (int) $t['id'] ?>">Status for <?= e($title) ?></label>
+                                <select class="select" id="st<?= (int) $t['id'] ?>" name="new_status"
+                                        data-autosubmit style="height:32px;font-size:var(--fs-sm);min-width:118px">
+                                    <?php foreach (['draft' => 'Draft', 'upcoming' => 'Upcoming', 'past' => 'Past'] as $v => $l): ?>
+                                        <option value="<?= $v ?>" <?= $t['status'] === $v ? 'selected' : '' ?>><?= $l ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </form>
+                        </td>
+
+                        <td class="shrink">
+                            <div class="row-actions">
+                                <?= ui_icon_btn('ri-pencil-line', 'Edit ' . $title, ['href' => $editUrl]) ?>
+                                <?= ui_action_form(
+                                    url('tours'),
+                                    ['action' => 'delete', 'id' => (int) $t['id'], 'status' => $filter],
+                                    ui_icon_btn('ri-delete-bin-line', 'Delete ' . $title, ['variant' => 'danger-ghost']),
+                                    [
+                                        'confirm'       => 'Delete “' . $title . '”?',
+                                        'confirm_text'  => 'Registrations linked to this tour are kept, but will no longer show which tour they were for. This cannot be undone.',
+                                        'confirm_label' => 'Delete tour',
+                                    ]
+                                ) ?>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="tourNoResults" class="hide">
+            <?php ui_empty('ri-search-line', 'No tours match your search', 'Try a different word, or clear the search box.'); ?>
+        </div>
+    <?php endif; ?>
+</div>
+
+<?php require __DIR__ . '/partials/foot.php'; ?>

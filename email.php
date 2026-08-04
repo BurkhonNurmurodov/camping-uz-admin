@@ -1,7 +1,6 @@
 <?php
 require __DIR__ . '/app/bootstrap.php';
 require_admin();
-require __DIR__ . '/partials/widgets.php';
 require_once __DIR__ . '/app/MailClient.php';
 
 // Which mailbox this request is for. Every AJAX call and both compose forms carry
@@ -134,25 +133,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     redirect('email.php');
 }
 
-$page = ['title' => 'Email', 'section' => 'Applications', 'active' => 'email'];
+$page = [
+    'title'      => 'Mail',
+    'subtitle'   => 'Read and reply to mail sent to your agency addresses.',
+    'active'     => 'mail',
+    'vendor_js'  => ['libs/bootstrap/js/bootstrap.bundle.min.js'],
+];
 require __DIR__ . '/partials/head.php';
 ?>
 
 <!-- Gmail Inspired Webmail CSS -->
 <style>
-    :root {
-        --gmail-bg: #f6f8fc;
-        --gmail-card-bg: #ffffff;
-        --gmail-border: #e1e5ea;
-        --gmail-hover: #f2f6fc;
-        --gmail-unread-bg: #ffffff;
-        --gmail-read-bg: #f8fafe;
-        --gmail-primary: #0b57d0;
-        --gmail-compose-bg: #c2e7ff;
-        --gmail-compose-hover: #b1dcfb;
-        --gmail-compose-text: #001d35;
+    /* Webmail skin — mapped onto the admin design tokens so the Mail screen
+       belongs to the same product as everything else, in both themes. */
+    .gmail-app-wrapper {
+        --gmail-bg: var(--canvas);
+        --gmail-card-bg: var(--surface);
+        --gmail-border: var(--border);
+        --gmail-hover: var(--surface-hover);
+        --gmail-unread-bg: var(--surface);
+        --gmail-read-bg: var(--surface-sunk);
+        --gmail-primary: var(--primary);
+        --gmail-compose-bg: var(--primary);
+        --gmail-compose-hover: var(--primary-hover);
+        --gmail-compose-text: var(--primary-fg);
     }
-
     .gmail-app-wrapper {
         background: var(--gmail-bg);
         border: 1px solid var(--gmail-border);
@@ -177,7 +182,7 @@ require __DIR__ . '/partials/head.php';
     .gmail-search-box {
         max-width: 680px;
         flex-grow: 1;
-        background: #eaf1fb;
+        background: var(--primary-soft);
         border-radius: 24px;
         padding: 8px 18px;
         display: flex;
@@ -186,9 +191,9 @@ require __DIR__ . '/partials/head.php';
         border: 1px solid transparent;
     }
     .gmail-search-box:focus-within {
-        background: #ffffff;
+        background: var(--surface);
         box-shadow: 0 1px 3px 0 rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15);
-        border-color: #e0e0e0;
+        border-color: var(--border);
     }
     .gmail-search-input {
         border: none;
@@ -196,7 +201,7 @@ require __DIR__ . '/partials/head.php';
         width: 100%;
         outline: none;
         font-size: 15px;
-        color: #1f1f1f;
+        color: var(--fg-strong);
         padding-left: 10px;
     }
 
@@ -207,12 +212,12 @@ require __DIR__ . '/partials/head.php';
         gap: 8px;
         max-width: 260px;
         border: 1px solid var(--gmail-border);
-        background: #ffffff;
+        background: var(--surface);
         border-radius: 20px;
         padding: 5px 12px 5px 6px;
         font-size: 13px;
         font-weight: 600;
-        color: #202124;
+        color: var(--fg-strong);
         transition: background-color 0.15s, box-shadow 0.15s;
     }
     .gmail-account-switch:hover {
@@ -224,7 +229,7 @@ require __DIR__ . '/partials/head.php';
         height: 26px;
         border-radius: 50%;
         background: var(--gmail-primary);
-        color: #fff;
+        color: var(--surface);
         font-size: 13px;
         font-weight: 700;
         display: inline-flex;
@@ -233,7 +238,7 @@ require __DIR__ . '/partials/head.php';
         flex-shrink: 0;
     }
     .gmail-account-option.active {
-        background: #e8f0fe;
+        background: var(--primary-soft);
     }
 
     /* Threaded conversation */
@@ -245,8 +250,8 @@ require __DIR__ . '/partials/head.php';
         margin-bottom: 12px;
     }
     .thread-message.is-sent {
-        background: #f8fafe;
-        border-color: #d7e3fb;
+        background: var(--surface-sunk);
+        border-color: var(--primary-soft);
     }
     .thread-message-head {
         display: flex;
@@ -264,8 +269,8 @@ require __DIR__ . '/partials/head.php';
     /* Collapsed quoted reply chain */
     .mail-quote-toggle {
         border: none;
-        background: #e8eaed;
-        color: #5f6368;
+        background: var(--border);
+        color: var(--fg-muted);
         border-radius: 10px;
         padding: 1px 10px;
         line-height: 1;
@@ -273,12 +278,12 @@ require __DIR__ . '/partials/head.php';
         transition: background-color 0.15s;
     }
     .mail-quote-toggle:hover,
-    .mail-quote-toggle.active { background: #d5d8dc; }
+    .mail-quote-toggle.active { background: var(--border-strong); }
     .mail-quote {
         margin: 12px 0 0 0;
         padding: 4px 0 4px 14px;
-        border-left: 2px solid #dadce0;
-        color: #5f6368;
+        border-left: 2px solid var(--border);
+        color: var(--fg-muted);
         font-size: 14px;
         overflow-x: auto;
     }
@@ -335,7 +340,7 @@ require __DIR__ . '/partials/head.php';
         align-items: center;
         justify-content: space-between;
         padding: 10px 24px 10px 26px;
-        color: #444746;
+        color: var(--fg-muted);
         text-decoration: none;
         font-size: 14px;
         font-weight: 500;
@@ -346,15 +351,15 @@ require __DIR__ . '/partials/head.php';
     }
     .gmail-nav-item:hover {
         background: rgba(0, 0, 0, 0.05);
-        color: #1f1f1f;
+        color: var(--fg-strong);
     }
     .gmail-nav-item.active {
-        background: #d3e3fd;
-        color: #041e49;
+        background: var(--primary-soft);
+        color: var(--fg-strong);
         font-weight: 700;
     }
     .gmail-nav-item.active i {
-        color: #041e49 !important;
+        color: var(--fg-strong) !important;
     }
 
     /* Message Box & Rows */
@@ -362,7 +367,7 @@ require __DIR__ . '/partials/head.php';
         flex-grow: 1;
         display: flex;
         flex-direction: column;
-        background: #ffffff;
+        background: var(--surface);
         overflow: hidden;
         border-top-left-radius: 16px;
         border-left: 1px solid var(--gmail-border);
@@ -382,22 +387,22 @@ require __DIR__ . '/partials/head.php';
         display: flex;
         align-items: center;
         padding: 10px 20px;
-        border-bottom: 1px solid #f1f3f4;
+        border-bottom: 1px solid var(--surface-hover);
         cursor: pointer;
         transition: box-shadow 0.1s, background-color 0.15s, border-color 0.15s;
         position: relative;
         background: var(--gmail-read-bg);
-        color: #5f6368;
+        color: var(--fg-muted);
         font-size: 14px;
     }
     .gmail-row.unread {
         background: var(--gmail-unread-bg);
         font-weight: 700;
-        color: #202124;
+        color: var(--fg-strong);
     }
     .gmail-row:hover {
         background-color: var(--gmail-hover);
-        box-shadow: inset 1px 0 0 #dadce0, inset -1px 0 0 #dadce0, 0 1px 2px 0 rgba(60,64,67,0.1);
+        box-shadow: inset 1px 0 0 var(--border), inset -1px 0 0 var(--border), 0 1px 2px 0 rgba(60,64,67,0.1);
         z-index: 2;
     }
     .gmail-sender {
@@ -424,7 +429,7 @@ require __DIR__ . '/partials/head.php';
         text-overflow: ellipsis;
     }
     .gmail-snippet {
-        color: #5f6368;
+        color: var(--fg-muted);
         font-weight: 400;
         margin-left: 6px;
         overflow: hidden;
@@ -458,7 +463,7 @@ require __DIR__ . '/partials/head.php';
 
     /* Attachment indicator */
     .gmail-attach-icon {
-        color: #5f6368;
+        color: var(--fg-muted);
         font-size: 14px;
         margin-right: 8px;
         flex-shrink: 0;
@@ -474,16 +479,16 @@ require __DIR__ . '/partials/head.php';
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        color: #444746;
+        color: var(--fg-muted);
         transition: background-color 0.15s;
     }
     .gmail-icon-btn:hover {
         background-color: rgba(68, 71, 70, 0.1);
-        color: #1f1f1f;
+        color: var(--fg-strong);
     }
     .gmail-icon-btn.delete-btn:hover {
         background-color: rgba(220, 53, 69, 0.1);
-        color: #dc3545;
+        color: var(--danger);
     }
 
     /* Avatar Tag */
@@ -491,7 +496,7 @@ require __DIR__ . '/partials/head.php';
         width: 34px;
         height: 34px;
         border-radius: 50%;
-        color: #fff;
+        color: var(--surface);
         font-size: 15px;
         font-weight: 600;
         display: flex;
@@ -507,16 +512,16 @@ require __DIR__ . '/partials/head.php';
         display: flex;
         flex-direction: column;
         height: 100%;
-        background: #ffffff;
+        background: var(--surface);
     }
     .gmail-reading-header {
         padding: 20px 28px 16px 28px;
-        border-bottom: 1px solid #f1f3f4;
+        border-bottom: 1px solid var(--surface-hover);
     }
     .gmail-subject-title {
         font-size: 22px;
         font-weight: 400;
-        color: #1f1f1f;
+        color: var(--fg-strong);
         margin-bottom: 16px;
         word-break: break-word;
     }
@@ -524,32 +529,32 @@ require __DIR__ . '/partials/head.php';
         padding: 24px 28px;
         font-size: 15px;
         line-height: 1.65;
-        color: #202124;
+        color: var(--fg-strong);
         overflow-y: auto;
         flex-grow: 1;
     }
     .gmail-quick-reply-box {
         margin: 20px 28px 28px 28px;
-        border: 1px solid #dadce0;
+        border: 1px solid var(--border);
         border-radius: 24px;
         padding: 16px 24px;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        background: #fafafc;
+        background: var(--surface-sunk);
         cursor: pointer;
         transition: box-shadow 0.15s, border-color 0.15s;
     }
     .gmail-quick-reply-box:hover {
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        border-color: #c0c4c9;
-        background: #ffffff;
+        border-color: var(--border-strong);
+        background: var(--surface);
     }
 
     /* CC/BCC toggle */
     .ccbcc-toggle {
         font-size: 13px;
-        color: #5f6368;
+        color: var(--fg-muted);
         cursor: pointer;
         text-decoration: none;
         font-weight: 500;
@@ -560,18 +565,18 @@ require __DIR__ . '/partials/head.php';
 
     /* Attachment dropzone */
     .gmail-attach-zone {
-        border: 2px dashed #dadce0;
+        border: 2px dashed var(--border);
         border-radius: 12px;
         padding: 12px 16px;
         text-align: center;
-        color: #5f6368;
+        color: var(--fg-muted);
         font-size: 13px;
         cursor: pointer;
         transition: border-color 0.2s, background-color 0.2s;
     }
     .gmail-attach-zone:hover, .gmail-attach-zone.dragover {
         border-color: var(--gmail-primary);
-        background: #eaf1fb;
+        background: var(--primary-soft);
     }
     .gmail-attach-zone input[type="file"] {
         display: none;
@@ -595,6 +600,49 @@ require __DIR__ . '/partials/head.php';
             width: 130px;
         }
     }
+
+    /* The mail folder list runs horizontally across the top of the workspace.
+       As a vertical rail it sat directly beside the main sidebar and read as a
+       second, competing navigation. */
+    .gmail-workspace { flex-direction: column !important; }
+    .gmail-sidebar {
+        width: 100% !important;
+        max-width: none !important;
+        flex-direction: row !important;
+        align-items: center;
+        gap: var(--sp-2);
+        padding: var(--sp-3) var(--sp-4) !important;
+        border-right: 0 !important;
+        border-bottom: 1px solid var(--gmail-border);
+        overflow-x: auto;
+    }
+    .gmail-sidebar > .flex-grow-1 {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-1);
+        flex-grow: 0 !important;
+    }
+    .gmail-nav-item {
+        border-radius: var(--r-md) !important;
+        margin: 0 !important;
+        padding: var(--sp-2) var(--sp-3) !important;
+        white-space: nowrap;
+    }
+    .gmail-compose-btn {
+        margin: 0 !important;
+        flex-shrink: 0;
+        border-radius: var(--r-md) !important;
+    }
+    #inboxStatusText {
+        margin: 0 0 0 auto !important;
+        padding: 0 !important;
+        border: 0 !important;
+        white-space: nowrap;
+        text-align: end !important;
+    }
+    @media (max-width: 767.98px) {
+        #inboxStatusText { display: none !important; }
+    }
 </style>
 
 <div class="gmail-app-wrapper mb-4">
@@ -602,7 +650,7 @@ require __DIR__ . '/partials/head.php';
     <div class="gmail-header-bar">
         <div class="d-flex align-items-center gap-2">
             <i class="ri-mail-star-fill fs-24 text-primary"></i>
-            <h5 class="mb-0 fw-bold fs-18 text-dark d-none d-xl-inline">Webmail</h5>
+            <span class="t-md t-semibold t-strong d-none d-xl-inline">Mailbox</span>
 
             <!-- Mailbox switcher: every request below carries the selected account id -->
             <div class="dropdown">

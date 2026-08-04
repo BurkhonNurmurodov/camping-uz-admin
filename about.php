@@ -1,7 +1,6 @@
 <?php
 require __DIR__ . '/app/bootstrap.php';
 require_admin();
-require __DIR__ . '/partials/widgets.php';
 
 $about = db_one("SELECT * FROM pages WHERE `key`='about'");
 if (!$about) {
@@ -24,28 +23,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('about');
 }
 
-$page = ['title' => 'About page', 'section' => 'Content', 'active' => 'about', 'vendor_css' => quill_vendor_css()];
+$page = [
+    'title'      => 'Pages',
+    'subtitle'   => 'The three standing pages on your website.',
+    'active'     => 'pages',
+    'tabs'       => admin_pages_tabs('about'),
+    'vendor_css' => quill_vendor_css(),
+    'actions'    => ui_btn('View on site', [
+        'href'  => public_site_url('index.php#about'),
+        'icon'  => 'ri-external-link-line',
+        'attrs' => ['target' => '_blank', 'rel' => 'noopener'],
+    ]),
+];
 require __DIR__ . '/partials/head.php';
 ?>
-<form method="post" action="about">
+
+<form method="post" action="<?= url('about') ?>" data-guard>
     <?= csrf_field() ?>
-    <div class="card">
-        <div class="card-header"><h5 class="card-title mb-0">About us content</h5></div>
-        <div class="card-body">
-            <p class="text-muted fs-13">Format text (bold, italic, underline, strike, quote, code, spoiler) and insert images/videos with adjustable size and position.</p>
-            <?php lang_tabs('about', function ($l) use ($about) { ?>
-                <div class="mb-3">
-                    <label class="form-label">Title (<?= strtoupper($l) ?>)</label>
-                    <input type="text" name="title_<?= $l ?>" class="form-control" value="<?= e($about["title_$l"] ?? '') ?>">
+    <div class="row">
+        <div class="col-12 col-xl-9">
+            <section class="card">
+                <div class="card__head">
+                    <div>
+                        <h2 class="card__title">About us</h2>
+                        <p class="card__sub">Who you are, in both languages.</p>
+                    </div>
                 </div>
-                <label class="form-label">Body (<?= strtoupper($l) ?>)</label>
-                <?php editor_field("body_$l", $about["body_{$l}_html"] ?? '', 'Tell visitors who you are…'); ?>
-            <?php }); ?>
+                <div class="card__body">
+                    <?php ui_lang_tabs('about', function ($l) use ($about) { ?>
+                        <?php ui_field("title_$l", 'Heading (' . strtoupper($l) . ')', [
+                            'value' => $about["title_$l"] ?? '',
+                        ]); ?>
+                        <div class="field">
+                            <label class="label">Body (<?= strtoupper($l) ?>)</label>
+                            <?php ui_editor("body_$l", $about["body_{$l}_html"] ?? '', 'Tell visitors who you are…'); ?>
+                            <p class="hint">
+                                You can format text and insert images or video. Select an image after inserting it to resize or align it.
+                            </p>
+                        </div>
+                    <?php }); ?>
+                </div>
+            </section>
         </div>
     </div>
-    <div class="mb-3">
-        <button class="btn btn-primary"><i class="ri-save-line me-1"></i> Save About page</button>
-    </div>
+
+    <?php ui_sticky_actions('Save About page'); ?>
 </form>
 
 <?php

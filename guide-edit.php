@@ -114,92 +114,110 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $socials = $id ? db_all('SELECT * FROM guide_socials WHERE guide_id=? ORDER BY sort_order', [$id]) : [];
 
-$page = ['title' => $guide ? 'Edit guide' : 'New guide', 'section' => 'Guides', 'active' => 'guides'];
+// Preserve what was typed when validation fails.
+$reposted = $_SERVER['REQUEST_METHOD'] === 'POST';
+$pick = static fn(string $k, $stored) => $reposted ? (string) ($_POST[$k] ?? '') : (string) ($stored ?? '');
+if ($reposted) {
+    $socials = [];
+    foreach ((array) ($_POST['social_type'] ?? []) as $i => $type) {
+        $socials[] = [
+            'type'        => $type,
+            'value'       => $_POST['social_value'][$i] ?? '',
+            'custom_name' => $_POST['social_custom_name'][$i] ?? '',
+            'custom_icon' => $_POST['social_icon_keep'][$i] ?? '',
+        ];
+    }
+}
+
+$page = [
+    'title'    => $guide ? 'Edit guide' : 'New guide',
+    'subtitle' => $guide ? ($guide['full_name'] ?? '') : 'Add someone who leads your trips.',
+    'active'   => 'guides',
+    'back'     => ['href' => url('guides'), 'label' => 'All guides'],
+];
 require __DIR__ . '/partials/head.php';
 ?>
-<form method="post" enctype="multipart/form-data" action="<?= url('guide-edit' . ($id ? '?id=' . $id : '')) ?>">
+
+<form method="post" enctype="multipart/form-data" data-guard
+      action="<?= url('guide-edit' . ($id ? '?id=' . $id : '')) ?>">
     <?= csrf_field() ?>
-    <div class="row g-3">
-        <div class="col-12 col-lg-8">
-            <div class="card">
-                <div class="card-header"><h5 class="card-title mb-0">Details</h5></div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label">Full name <span class="text-danger">*</span></label>
-                        <input type="text" name="full_name" class="form-control" value="<?= e($guide['full_name'] ?? '') ?>" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Brief description (EN)</label>
-                        <textarea name="bio_en" class="form-control" rows="3"><?= e($guide['bio_en'] ?? '') ?></textarea>
-                    </div>
-                    <div class="mb-0">
-                        <label class="form-label">Brief description (RU)</label>
-                        <textarea name="bio_ru" class="form-control" rows="3"><?= e($guide['bio_ru'] ?? '') ?></textarea>
-                    </div>
-                </div>
-            </div>
 
-            <!-- Socials -->
-            <div class="card">
-                <div class="card-header d-flex align-items-center">
-                    <h5 class="card-title mb-0">Social links</h5>
-                    <button type="button" class="btn btn-sm btn-light ms-auto" id="addSocial"><i class="ri-add-line"></i> Add</button>
+    <div class="split split--main-aside">
+        <div class="stack">
+            <section class="card">
+                <div class="card__head"><h2 class="card__title">Details</h2></div>
+                <div class="card__body">
+                    <?php ui_field('full_name', 'Full name', [
+                        'value'       => $pick('full_name', $guide['full_name'] ?? ''),
+                        'required'    => true,
+                        'placeholder' => 'e.g. Aziz Karimov',
+                    ]); ?>
+
+                    <?php ui_field('bio_en', 'Short description (EN)', [
+                        'type'  => 'textarea',
+                        'rows'  => 3,
+                        'value' => $pick('bio_en', $guide['bio_en'] ?? ''),
+                        'hint'  => 'One or two sentences shown under their name.',
+                    ]); ?>
+
+                    <?php ui_field('bio_ru', 'Short description (RU)', [
+                        'type'  => 'textarea',
+                        'rows'  => 3,
+                        'value' => $pick('bio_ru', $guide['bio_ru'] ?? ''),
+                    ]); ?>
                 </div>
-                <div class="card-body">
-                    <div id="socialRows" class="d-flex flex-column gap-2"></div>
-                    <p class="text-muted fs-12 mb-0 mt-2">Added one by one. “Other” asks for a name, an icon and a link.</p>
+            </section>
+
+            <section class="card">
+                <div class="card__head">
+                    <div>
+                        <h2 class="card__title">Social links</h2>
+                        <p class="card__sub">Choose “Other…” to add a custom name and icon.</p>
+                    </div>
+                    <div class="card__head-actions">
+                        <?= ui_btn('Add link', ['icon' => 'ri-add-line', 'size' => 'sm', 'type' => 'button', 'attrs' => ['id' => 'addSocial']]) ?>
+                    </div>
                 </div>
-            </div>
+                <div class="card__body">
+                    <div id="socialRows" class="stack stack--sm"></div>
+                    <p class="hint" id="socialEmpty">No social links yet.</p>
+                </div>
+            </section>
         </div>
 
-        <div class="col-12 col-lg-4">
-            <div class="card">
-                <div class="card-header"><h5 class="card-title mb-0">Photo (square)</h5></div>
-                <div class="card-body text-center">
-                    <?php $hasImg = $guide && $guide['image']; ?>
-                    <label class="dnd-upload-wrap <?= $hasImg ? 'has-preview' : '' ?>">
-                        <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
-                        <div class="dnd-upload-text">Drag and drop or press to upload</div>
-                        <div class="dnd-upload-subtext">JPG, PNG, WebP</div>
-                        <input type="file" name="image" accept="image/*" id="imgInput" data-remove-target="rmImg">
-                        <div class="dnd-preview-container">
-                            <?php if ($hasImg): ?>
-                                <img src="<?= e(upload_url($guide['image'])) ?>" class="dnd-preview-img">
-                            <?php endif; ?>
-                        </div>
-                        <div class="dnd-loader">
-                            <div class="spinner-border text-primary" role="status"></div>
-                        </div>
-                    </label>
-                    <?php if ($hasImg): ?>
-                        <div class="form-check mt-2 text-start d-none">
-                            <input class="form-check-input" type="checkbox" name="remove_image" id="rmImg" value="1">
-                            <label class="form-check-label fs-13" for="rmImg">Remove current photo</label>
-                        </div>
-                    <?php endif; ?>
+        <aside class="stack">
+            <section class="card">
+                <div class="card__head"><h2 class="card__title">Photo</h2></div>
+                <div class="card__body">
+                    <?php ui_upload('image', 'Portrait', [
+                        'accept'      => 'image/*',
+                        'hint'        => 'Square works best · JPG, PNG or WebP · max 8 MB',
+                        'current'     => ($guide && $guide['image']) ? upload_url($guide['image']) : '',
+                        'remove_name' => 'remove_image',
+                    ]); ?>
                 </div>
-            </div>
-            <div class="d-grid gap-2">
-                <button class="btn btn-primary"><i class="ri-save-line me-1"></i> Save guide</button>
-                <a href="<?= url('guides') ?>" class="btn btn-light">Cancel</a>
-            </div>
-        </div>
+            </section>
+        </aside>
     </div>
+
+    <?php ui_sticky_actions($guide ? 'Save guide' : 'Create guide', ['cancel_href' => url('guides')]); ?>
 </form>
 
-<!-- Row template -->
 <template id="socialTpl">
-    <div class="repeat-row border rounded p-2 d-flex flex-wrap align-items-start gap-2">
-        <select name="social_type[]" class="form-select form-select-sm social-type" style="max-width:200px">
+    <div class="repeat-row">
+        <label class="sr-only">Network</label>
+        <select name="social_type[]" class="select social-type" style="flex:0 1 190px" aria-label="Network">
             <?php foreach (SOCIAL_TYPES as $val => $label): ?>
                 <option value="<?= $val ?>"><?= e($label) ?></option>
             <?php endforeach; ?>
         </select>
-        <input type="text" name="social_value[]" class="form-control form-control-sm social-value" style="min-width:160px;flex:1" placeholder="username">
-        <input type="text" name="social_custom_name[]" class="form-control form-control-sm social-cname" style="max-width:160px;display:none" placeholder="Name">
-        <input type="file" name="social_custom_icon[]" class="form-control form-control-sm social-cicon" style="max-width:170px;display:none" accept="image/*">
+        <input type="text" name="social_value[]" class="input social-value" style="flex:1 1 160px" placeholder="username or URL" aria-label="Username or URL">
+        <input type="text" name="social_custom_name[]" class="input social-cname" style="flex:0 1 150px" placeholder="Display name" aria-label="Custom network name">
+        <input type="file" name="social_custom_icon[]" class="input social-cicon" style="flex:0 1 170px;padding-top:6px" accept="image/*" aria-label="Custom icon">
         <input type="hidden" name="social_icon_keep[]" value="">
-        <button type="button" class="btn btn-sm btn-light text-danger remove-social"><i class="ri-close-line"></i></button>
+        <button type="button" class="btn btn--icon btn--sm btn--danger-ghost remove-social" aria-label="Remove this link" title="Remove this link">
+            <i class="ri-close-line" aria-hidden="true"></i>
+        </button>
     </div>
 </template>
 
@@ -209,7 +227,6 @@ $existing = array_map(static function ($s) {
         'type'  => $s['type'],
         'value' => $s['value'],
         'cname' => $s['custom_name'],
-        'icon'  => $s['custom_icon'] ? upload_url($s['custom_icon']) : '',
         'keep'  => $s['custom_icon'] ?? '',
     ];
 }, $socials);
@@ -218,6 +235,9 @@ $page['inline_js'] = '
 var EXISTING = ' . json_encode($existing) . ';
 var rows = document.getElementById("socialRows");
 var tpl = document.getElementById("socialTpl");
+var emptyNote = document.getElementById("socialEmpty");
+
+function syncEmpty(){ emptyNote.classList.toggle("hide", rows.children.length > 0); }
 
 function wireRow(row, data){
   var typeSel = row.querySelector(".social-type");
@@ -226,8 +246,8 @@ function wireRow(row, data){
   var keep  = row.querySelector("input[name=\"social_icon_keep[]\"]");
   function toggle(){
     var other = typeSel.value === "other";
-    cname.style.display = other ? "" : "none";
-    cicon.style.display = other ? "" : "none";
+    cname.classList.toggle("hide", !other);
+    cicon.classList.toggle("hide", !other);
   }
   typeSel.addEventListener("change", toggle);
   if (data){
@@ -237,23 +257,17 @@ function wireRow(row, data){
     keep.value = data.keep || "";
   }
   toggle();
-  row.querySelector(".remove-social").addEventListener("click", function(){ row.remove(); });
+  row.querySelector(".remove-social").addEventListener("click", function(){ row.remove(); syncEmpty(); });
 }
 function addRow(data){
   var node = tpl.content.firstElementChild.cloneNode(true);
   rows.appendChild(node);
   wireRow(node, data);
+  syncEmpty();
 }
 EXISTING.forEach(addRow);
+syncEmpty();
 document.getElementById("addSocial").addEventListener("click", function(){ addRow(null); });
-
-// image preview
-var imgInput = document.getElementById("imgInput");
-imgInput && imgInput.addEventListener("change", function(){
-  var f = imgInput.files[0]; if(!f) return;
-  var p = document.getElementById("imgPreview");
-  p.src = URL.createObjectURL(f); p.style.display = "";
-});
 ';
 require __DIR__ . '/partials/foot.php';
 ?>

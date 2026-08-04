@@ -4,112 +4,227 @@ require_admin();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
-    $id = (int) input('id');
-    if (input('action') === 'toggle') {
-        db_run("UPDATE private_tour_requests SET status = IF(status='new','handled','new') WHERE id=?", [$id]);
-    } elseif (input('action') === 'delete') {
-        db_run('DELETE FROM private_tour_requests WHERE id=?', [$id]);
+    $action = input('action');
+
+    if ($action === 'toggle') {
+        db_run("UPDATE private_tour_requests SET status = IF(status='new','handled','new') WHERE id=?", [(int) input('id')]);
+    } elseif ($action === 'delete') {
+        db_run('DELETE FROM private_tour_requests WHERE id=?', [(int) input('id')]);
         flash('success', 'Request deleted.');
+    } elseif ($action === 'bulk') {
+        $ids = array_values(array_filter(array_map('intval', (array) input('ids', []))));
+        if ($ids) {
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $to = input('bulk_action') === 'new' ? 'new' : 'handled';
+            db_run("UPDATE private_tour_requests SET status=? WHERE id IN ($in)", array_merge([$to], $ids));
+            flash('success', count($ids) . ' request(s) marked ' . $to . '.');
+        }
     }
-    redirect('private-requests.php' . (input('filter') ? '?filter=' . urlencode((string) input('filter')) : ''));
+    redirect('private-requests' . (input('filter') ? '?filter=' . urlencode((string) input('filter')) : ''));
 }
 
-$filter = input('filter') === 'new' ? 'new' : (input('filter') === 'handled' ? 'handled' : '');
-$where  = $filter ? "WHERE status = " . db()->quote($filter) : '';
+$filter   = in_array(input('filter'), ['new', 'handled'], true) ? (string) input('filter') : '';
+$where    = $filter !== '' ? 'WHERE status = ' . db()->quote($filter) : '';
 $requests = db_all("SELECT * FROM private_tour_requests $where ORDER BY created_at DESC");
 
-$page = ['title' => 'Private Tour Requests', 'section' => 'Inbox', 'active' => 'private-requests'];
+$counts = ['' => 0, 'new' => 0, 'handled' => 0];
+foreach (db_all("SELECT status, COUNT(*) c FROM private_tour_requests GROUP BY status") as $r) {
+    $counts[$r['status']] = (int) $r['c'];
+    $counts[''] += (int) $r['c'];
+}
+
+$page = [
+    'title'    => 'Private requests',
+    'subtitle' => 'Custom trip enquiries from the “Private tours” form.',
+    'active'   => 'private-requests',
+];
 require __DIR__ . '/partials/head.php';
 ?>
 
-<ul class="nav nav-pills mb-3">
-    <?php foreach (['' => 'All', 'new' => 'New', 'handled' => 'Handled'] as $k => $l): ?>
-        <li class="nav-item"><a class="nav-link <?= (string) $filter === $k ? 'active' : '' ?>" href="<?= url('private-requests' . ($k ? '?filter=' . $k : '')) ?>"><?= $l ?></a></li>
-    <?php endforeach; ?>
-</ul>
-
-<?php if (!$requests): ?>
-    <div class="card"><div class="card-body text-center text-muted py-5"><i class="ri-vip-diamond-line fs-1 d-block mb-2"></i>No private requests<?= $filter ? ' in this view' : ' yet' ?>.</div></div>
-<?php else: ?>
-    <div class="row g-3">
-        <?php foreach ($requests as $r): $isNew = $r['status'] === 'new'; ?>
-            <div class="col-12 col-xl-6">
-                <div class="card mb-0 h-100 <?= $isNew ? 'border-warning' : '' ?>">
-                    <div class="card-body">
-                        <div class="d-flex align-items-start mb-3">
-                            <div>
-                                <span class="badge bg-<?= $isNew ? 'warning text-dark' : 'light text-muted' ?> mb-1"><?= $isNew ? 'New' : 'Handled' ?></span>
-                                <div class="fw-semibold fs-16"><?= e($r['name']) ?></div>
-                                <div class="fs-12 text-muted"><?= e(date('M j, Y H:i', strtotime($r['created_at']))) ?></div>
-                            </div>
-                            <div class="ms-auto d-flex gap-1">
-                                <form method="post" action="private-requests" class="d-inline">
-                                    <?= csrf_field() ?>
-                                    <input type="hidden" name="action" value="toggle">
-                                    <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
-                                    <input type="hidden" name="filter" value="<?= e((string) $filter) ?>">
-                                    <button class="btn btn-sm btn-light" title="Mark <?= $isNew ? 'handled' : 'new' ?>"><i class="ri-check-double-line"></i></button>
-                                </form>
-                                <form method="post" action="private-requests" class="d-inline js-delete">
-                                    <?= csrf_field() ?>
-                                    <input type="hidden" name="action" value="delete">
-                                    <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
-                                    <button class="btn btn-sm btn-light text-danger"><i class="ri-delete-bin-line"></i></button>
-                                </form>
-                            </div>
-                        </div>
-                        
-                        <div class="bg-light rounded p-3 mb-3">
-                            <div class="row g-2 text-sm">
-                                <div class="col-6">
-                                    <div class="text-muted fs-12 text-uppercase fw-semibold">Email</div>
-                                    <div><a href="mailto:<?= e($r['email']) ?>"><?= e($r['email']) ?></a></div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="text-muted fs-12 text-uppercase fw-semibold">WhatsApp</div>
-                                    <div><?= $r['whatsapp'] ? e($r['whatsapp']) : '<span class="text-muted">—</span>' ?></div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="text-muted fs-12 text-uppercase fw-semibold">Group Size</div>
-                                    <div><?= $r['group_size'] ? e($r['group_size']) : '<span class="text-muted">—</span>' ?></div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="text-muted fs-12 text-uppercase fw-semibold">Dates</div>
-                                    <div><?= $r['dates_info'] ? e($r['dates_info']) : '<span class="text-muted">—</span>' ?></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <?php 
-                        $dests = json_decode((string) $r['destinations'], true);
-                        if (!empty($dests) && is_array($dests)): 
-                        ?>
-                            <div class="mb-3">
-                                <div class="text-muted fs-12 text-uppercase fw-semibold mb-1">Destinations / Vibes</div>
-                                <?php foreach ($dests as $d): ?>
-                                    <span class="badge bg-secondary me-1"><?= e($d) ?></span>
-                                <?php endforeach; ?>
-                            </div>
-                        <?php endif; ?>
-
-                        <?php if ($r['notes']): ?>
-                            <div class="text-muted fs-12 text-uppercase fw-semibold mb-1">Notes</div>
-                            <div class="p-2 border rounded bg-white text-dark" style="white-space: pre-wrap; font-size: 13px;"><?= e($r['notes']) ?></div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-        <?php endforeach; ?>
+<div class="toolbar">
+    <?php ui_seg(
+        [
+            ''        => ['label' => 'All',     'count' => $counts['']],
+            'new'     => ['label' => 'New',     'count' => $counts['new']],
+            'handled' => ['label' => 'Handled', 'count' => $counts['handled']],
+        ],
+        $filter,
+        static fn($v) => url('private-requests' . ($v !== '' ? '?filter=' . $v : '')),
+        'Filter requests'
+    ); ?>
+    <div class="toolbar__end">
+        <?php ui_search('prList', 'Search name, email or destination…', ['empty_id' => 'prNoResults']); ?>
     </div>
-<?php endif; ?>
+</div>
+
+<div class="bulk-bar" id="prBulk">
+    <span class="bulk-bar__count">0 selected</span>
+    <div class="bulk-bar__actions">
+        <form method="post" action="<?= url('private-requests') ?>" class="btn-group">
+            <?= csrf_field() ?>
+            <input type="hidden" name="action" value="bulk">
+            <input type="hidden" name="filter" value="<?= e($filter) ?>">
+            <button class="btn btn--sm btn--secondary" name="bulk_action" value="handled" type="submit">
+                <i class="ri-check-double-line" aria-hidden="true"></i><span>Mark handled</span>
+            </button>
+            <button class="btn btn--sm btn--secondary" name="bulk_action" value="new" type="submit">
+                <i class="ri-inbox-unarchive-line" aria-hidden="true"></i><span>Mark new</span>
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <?php if (!$requests): ?>
+        <?php ui_empty(
+            'ri-vip-diamond-line',
+            $filter !== '' ? 'Nothing here' : 'No private requests yet',
+            $filter === 'new'
+                ? 'Every custom trip enquiry has been handled.'
+                : 'Custom trip enquiries from the website will appear here.'
+        ); ?>
+    <?php else: ?>
+        <div class="table-wrap" data-bulk="prBulk">
+            <table class="table table--stack" id="prList">
+                <thead>
+                    <tr>
+                        <th class="shrink">
+                            <input type="checkbox" class="row-select" data-bulk-all aria-label="Select all requests">
+                        </th>
+                        <th>Enquirer</th>
+                        <th>Group</th>
+                        <th>Dates</th>
+                        <th>Received</th>
+                        <th>Status</th>
+                        <th class="shrink"><span class="sr-only">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($requests as $r):
+                    $isNew = $r['status'] === 'new';
+                    $dests = json_decode((string) $r['destinations'], true);
+                    $dests = is_array($dests) ? $dests : [];
+                ?>
+                    <tr data-search-text="<?= e($r['name'] . ' ' . $r['email'] . ' ' . implode(' ', $dests) . ' ' . $r['notes']) ?>"
+                        class="<?= $isNew ? 'is-unread' : '' ?>">
+                        <td class="shrink" data-label="Select">
+                            <input type="checkbox" class="row-select" data-bulk-item value="<?= (int) $r['id'] ?>"
+                                   aria-label="Select request from <?= e($r['name']) ?>">
+                        </td>
+
+                        <td class="cell-primary">
+                            <div class="cell-media">
+                                <?= ui_avatar($r['name']) ?>
+                                <span>
+                                    <button type="button" class="cell-media__title js-expand"
+                                            aria-expanded="false" aria-controls="pr<?= (int) $r['id'] ?>"
+                                            style="background:none;border:0;padding:0;cursor:pointer;text-align:start;font:inherit;color:inherit">
+                                        <?= e($r['name']) ?>
+                                        <i class="ri-arrow-down-s-line t-muted" aria-hidden="true"></i>
+                                    </button>
+                                    <span class="cell-media__meta"><a href="mailto:<?= e($r['email']) ?>"><?= e($r['email']) ?></a></span>
+                                </span>
+                            </div>
+                        </td>
+
+                        <td data-label="Group"><span class="t-sm"><?= e($r['group_size'] ?: '—') ?></span></td>
+                        <td class="nowrap" data-label="Dates"><span class="t-sm"><?= e($r['dates_info'] ?: '—') ?></span></td>
+                        <td class="nowrap" data-label="Received"><span class="t-sm t-muted"><?= ui_time($r['created_at']) ?></span></td>
+                        <td class="nowrap" data-label="Status"><?= $isNew ? ui_status('New', 'warning') : ui_status('Handled', 'muted') ?></td>
+
+                        <td class="shrink">
+                            <div class="row-actions">
+                                <?= ui_action_form(
+                                    url('private-requests'),
+                                    ['action' => 'toggle', 'id' => (int) $r['id'], 'filter' => $filter],
+                                    ui_icon_btn(
+                                        $isNew ? 'ri-check-double-line' : 'ri-arrow-go-back-line',
+                                        $isNew ? 'Mark as handled' : 'Move back to new'
+                                    )
+                                ) ?>
+                                <?= ui_action_form(
+                                    url('private-requests'),
+                                    ['action' => 'delete', 'id' => (int) $r['id'], 'filter' => $filter],
+                                    ui_icon_btn('ri-delete-bin-line', 'Delete request from ' . $r['name'], ['variant' => 'danger-ghost']),
+                                    [
+                                        'confirm'      => 'Delete this request?',
+                                        'confirm_text' => 'The enquiry from ' . $r['name'] . ' will be removed permanently.',
+                                        'confirm_label'=> 'Delete',
+                                    ]
+                                ) ?>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <tr class="hide" id="pr<?= (int) $r['id'] ?>">
+                        <td colspan="7" style="background:var(--surface-sunk)">
+                            <div class="row g-4">
+                                <div class="col-12 col-md-5">
+                                    <p class="eyebrow mb-2">Contact</p>
+                                    <p class="t-sm mb-1">
+                                        <i class="ri-mail-line t-muted" aria-hidden="true"></i>
+                                        <a href="mailto:<?= e($r['email']) ?>"><?= e($r['email']) ?></a>
+                                    </p>
+                                    <p class="t-sm mb-3">
+                                        <i class="ri-whatsapp-line t-muted" aria-hidden="true"></i>
+                                        <?php if ($r['whatsapp']): ?>
+                                            <a href="https://wa.me/<?= e(preg_replace('/\D+/', '', $r['whatsapp'])) ?>"
+                                               target="_blank" rel="noopener"><?= e($r['whatsapp']) ?></a>
+                                        <?php else: ?><span class="t-muted">Not given</span><?php endif; ?>
+                                    </p>
+
+                                    <?php if ($dests): ?>
+                                        <p class="eyebrow mb-2">Destinations &amp; vibes</p>
+                                        <div class="row-flex row-flex--wrap" style="gap:var(--sp-1)">
+                                            <?php foreach ($dests as $d): ?>
+                                                <span class="chip"><?= e((string) $d) ?></span>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="col-12 col-md-7">
+                                    <p class="eyebrow mb-2">Notes from the enquirer</p>
+                                    <?php if ($r['notes']): ?>
+                                        <p class="t-sm" style="white-space:pre-wrap;max-width:72ch"><?= e($r['notes']) ?></p>
+                                    <?php else: ?>
+                                        <p class="t-sm t-muted">No additional notes.</p>
+                                    <?php endif; ?>
+                                    <div class="mt-3">
+                                        <?= ui_btn('Reply by email', [
+                                            'href'    => 'mailto:' . rawurlencode($r['email']) . '?subject=' . rawurlencode('Your private tour enquiry — Silk Naviora'),
+                                            'variant' => 'primary',
+                                            'size'    => 'sm',
+                                            'icon'    => 'ri-external-link-line',
+                                        ]) ?>
+                                        <span class="t-xs t-muted ms-2">Opens your computer’s mail app.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="prNoResults" class="hide">
+            <?php ui_empty('ri-search-line', 'No requests match your search', 'Try a name, an email address, or a destination.'); ?>
+        </div>
+    <?php endif; ?>
+</div>
 
 <?php
-$page['vendor_js'] = ['libs/sweetalert2/sweetalert2.all.min.js'];
-$page['inline_js'] = <<<JS
-document.querySelectorAll('form.js-delete').forEach(function(f){
-  f.addEventListener('submit', function(e){ e.preventDefault();
-    Swal.fire({title:'Delete this request?', icon:'warning', showCancelButton:true, confirmButtonText:'Delete', confirmButtonColor:'#d33'})
-      .then(function(r){ if(r.isConfirmed) f.submit(); }); });
+$page['inline_js'] = <<<'JS'
+document.querySelectorAll('.js-expand').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var row = document.getElementById(btn.getAttribute('aria-controls'));
+    if (!row) return;
+    var open = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', String(!open));
+    row.classList.toggle('hide', open);
+    var caret = btn.querySelector('i');
+    if (caret) caret.className = open ? 'ri-arrow-down-s-line t-muted' : 'ri-arrow-up-s-line t-muted';
+  });
 });
 JS;
 require __DIR__ . '/partials/foot.php';

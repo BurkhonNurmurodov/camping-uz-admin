@@ -720,7 +720,7 @@ class MailClient {
                     $filePath = $att->filePath ?: '';
                     $fileName = $att->name ?: ('attachment_' . ($att->id ?: uniqid()));
                     
-                    $storedName = '';
+                    $url = '';
                     if (!empty($filePath) && file_exists($filePath)) {
                         $storedName = basename($filePath);
                     } else {

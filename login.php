@@ -15,87 +15,110 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect($to && str_contains((string) $to, '/admin/') ? $to : url('index'));
     }
 }
-$A = 'assets';
+
+$A = BASE_PATH . '/assets';
+$logo = setting('logo_image') ?: setting('logo_image_light');
 ?>
 <!DOCTYPE html>
-<html lang="<?= e(current_lang()) ?>" data-bs-theme="light">
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>Sign in | Silk Naviora Admin</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="robots" content="noindex, nofollow">
-    <script type="module" src="<?= $A ?>/js/layout-setup.js"></script>
-    <?php if ($favicon = setting('favicon')): ?>
-        <link rel="shortcut icon" href="<?= e(upload_url($favicon)) ?>">
-    <?php else: ?>
-        <link rel="shortcut icon" href="<?= $A ?>/images/favicon.png">
-    <?php endif; ?>
-    <link href="<?= $A ?>/css/bootstrap.min.css" id="bootstrap-style" rel="stylesheet">
-    <link href="<?= $A ?>/css/icons.css" rel="stylesheet">
-    <link href="<?= $A ?>/css/app.min.css" id="app-style" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Sign in · Silk Naviora Admin</title>
+
+<?php if ($favicon = setting('favicon')): ?>
+    <link rel="icon" href="<?= e(upload_url($favicon)) ?>">
+<?php else: ?>
+    <link rel="icon" href="<?= $A ?>/images/favicon.png">
+<?php endif; ?>
+
+<script>
+(function(){try{var m=localStorage.getItem('sn.theme');if(m&&m!=='system')document.documentElement.setAttribute('data-theme',m);}catch(e){}})();
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<link rel="stylesheet" href="<?= $A ?>/libs/bootstrap/css/bootstrap-reboot.min.css">
+<link rel="stylesheet" href="<?= $A ?>/libs/bootstrap/css/bootstrap-grid.min.css">
+<link rel="stylesheet" href="<?= $A ?>/libs/bootstrap/css/bootstrap-utilities.min.css">
+<link rel="stylesheet" href="<?= $A ?>/libs/remixicon/fonts/remixicon.css">
+<link rel="stylesheet" href="<?= $A ?>/css/tokens.css">
+<link rel="stylesheet" href="<?= $A ?>/css/admin.css">
 </head>
 <body>
-<div class="container">
-    <div class="row justify-content-center align-items-center min-vh-100 py-5">
-        <div class="col-12 col-md-8 col-lg-6 col-xl-5">
-            <div class="text-center mb-4">
-                <?php
-                $logoImage = setting('logo_image');
-                $logoLight = setting('logo_image_light');
-                $loginLogo = $logoImage ?: $logoLight;
-                if ($loginLogo): ?>
-                    <img src="<?= e(upload_url($loginLogo)) ?>" alt="Logo" style="max-height: 48px; max-width: 100%; object-fit: contain;">
-                <?php else: ?>
-                    <span class="d-inline-flex align-items-center justify-content-center bg-primary text-white rounded fw-bold fs-20"
-                          style="width:48px;height:48px;">SN</span>
-                <?php endif; ?>
-                <h4 class="mt-3 mb-0">Silk Naviora</h4>
-                <p class="text-muted fs-13">Admin panel</p>
+<main class="login">
+    <div class="login__inner">
+        <div class="login__brand">
+            <?php if ($logo): ?>
+                <img src="<?= e(upload_url($logo)) ?>" alt="Silk Naviora" style="max-height:52px;max-width:220px;object-fit:contain">
+            <?php else: ?>
+                <span class="login__mark" aria-hidden="true">SN</span>
+            <?php endif; ?>
+            <div class="text-center">
+                <h1 class="login__title">Silk Naviora</h1>
+                <p class="login__sub mb-0">Admin panel</p>
             </div>
-            <div class="card shadow-sm">
-                <div class="card-body p-4 p-sm-5">
-                    <h3 class="fw-medium text-center mb-1">Welcome back</h3>
-                    <p class="mb-4 text-muted text-center fs-13">Sign in to manage tours, guides and inbox</p>
-
-                    <?php if ($error): ?>
-                        <div class="alert alert-danger py-2"><?= e($error) ?></div>
-                    <?php endif; ?>
-
-                    <form method="post" action="<?= url('login') ?>" novalidate>
-                        <?= csrf_field() ?>
-                        <div class="mb-3">
-                            <label for="username" class="form-label"><?= e(t('admin_username')) ?> <span class="text-danger">*</span></label>
-                            <input type="text" name="username" id="username" class="form-control" placeholder="admin"
-                                   autocomplete="username" autofocus required>
-                        </div>
-                        <div class="mb-4">
-                            <label for="password" class="form-label"><?= e(t('admin_password')) ?> <span class="text-danger">*</span></label>
-                            <div class="position-relative">
-                                <input type="password" name="password" id="password" class="form-control"
-                                       placeholder="••••••••" autocomplete="current-password" required>
-                                <button type="button" class="btn btn-link position-absolute end-0 top-0 text-muted" id="togglePw" tabindex="-1">
-                                    <i class="ri-eye-off-line"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <button type="submit" class="btn btn-primary w-100"><?= e(t('admin_login')) ?></button>
-                    </form>
-                </div>
-            </div>
-            <p class="text-center fs-13 text-muted mt-3 mb-0">&copy; <?= date('Y') ?> Silk Naviora</p>
         </div>
-    </div>
-</div>
 
-<script src="<?= $A ?>/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+        <div class="card">
+            <div class="card__body">
+                <?php if ($error): ?>
+                    <div class="alert alert--danger" role="alert">
+                        <i class="alert__icon ri-error-warning-line" aria-hidden="true"></i>
+                        <div class="alert__body"><?= e($error) ?></div>
+                    </div>
+                <?php endif; ?>
+
+                <form method="post" action="<?= url('login') ?>">
+                    <?= csrf_field() ?>
+
+                    <div class="field">
+                        <label class="label" for="username">Username</label>
+                        <input class="input" type="text" id="username" name="username"
+                               value="<?= e((string) input('username', '')) ?>"
+                               autocomplete="username" autofocus required
+                               <?= $error ? 'aria-invalid="true"' : '' ?>>
+                    </div>
+
+                    <div class="field">
+                        <label class="label" for="password">Password</label>
+                        <div class="pw-field">
+                            <input class="input" type="password" id="password" name="password"
+                                   autocomplete="current-password" required
+                                   <?= $error ? 'aria-invalid="true"' : '' ?>>
+                            <button type="button" class="pw-toggle" id="pwToggle"
+                                    aria-label="Show password" title="Show password">
+                                <i class="ri-eye-line" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn--primary btn--lg btn--block">
+                        <i class="ri-login-circle-line" aria-hidden="true"></i>
+                        <span>Sign in</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <p class="login__foot">&copy; <?= date('Y') ?> Silk Naviora</p>
+    </div>
+</main>
+
 <script>
 (function () {
-    var btn = document.getElementById('togglePw');
-    var pw = document.getElementById('password');
-    btn && btn.addEventListener('click', function () {
-        var show = pw.type === 'password';
-        pw.type = show ? 'text' : 'password';
-        btn.querySelector('i').className = show ? 'ri-eye-line' : 'ri-eye-off-line';
+    var btn = document.getElementById('pwToggle');
+    var input = document.getElementById('password');
+    btn.addEventListener('click', function () {
+        var show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        btn.setAttribute('title', show ? 'Hide password' : 'Show password');
+        btn.querySelector('i').className = show ? 'ri-eye-off-line' : 'ri-eye-line';
+        input.focus();
     });
 })();
 </script>

@@ -1,7 +1,6 @@
 <?php
 require __DIR__ . '/app/bootstrap.php';
 require_admin();
-require __DIR__ . '/partials/widgets.php';
 
 /** Ensure a unique slug in `tours`. */
 function unique_tour_slug(string $base, int $excludeId = 0): string
@@ -17,7 +16,9 @@ function unique_tour_slug(string $base, int $excludeId = 0): string
 
 $id   = (int) input('id', 0);
 $tour = $id ? db_one('SELECT * FROM tours WHERE id=?', [$id]) : null;
-if ($id && !$tour) { flash('error', 'Tour not found.'); redirect('tours'); }
+if ($id && !$tour) { flash('error', 'That tour no longer exists.'); redirect('tours'); }
+
+$errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -29,11 +30,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $descEn  = sanitize_html((string) input('description_en', ''));
     $descRu  = sanitize_html((string) input('description_ru', ''));
 
-    $errors = [];
-    if ($titleEn === '' && $titleRu === '') { $errors[] = 'A title (EN or RU) is required.'; }
+    if ($titleEn === '' && $titleRu === '') { $errors[] = 'Give the tour a title in English or Russian.'; }
     $dateOk = static fn($d) => $d === null || preg_match('/^\d{4}-\d{2}-\d{2}$/', $d);
-    if (!$dateOk($start) || !$dateOk($end)) { $errors[] = 'Invalid date format.'; }
-    if ($start && $end && $end < $start) { $errors[] = 'End date is before start date.'; }
+    if (!$dateOk($start) || !$dateOk($end)) { $errors[] = 'Those dates are not in a format we recognise.'; }
+    if ($start && $end && $end < $start) { $errors[] = 'The end date falls before the start date.'; }
 
     $slug = trim((string) input('slug', ''));
     $slug = unique_tour_slug($slug !== '' ? $slug : ($titleEn ?: $titleRu), $id);
@@ -71,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 [$id, trim((string) ($lEn[$i] ?? '')) ?: null, trim((string) ($lRu[$i] ?? '')) ?: null, (float) $lat, (float) $lng, $ord++]);
         }
 
-        // Categories
+        // Categories (max 4)
         db_run('DELETE FROM tour_categories WHERE tour_id=?', [$id]);
         $catIds = array_slice(array_unique(array_map('intval', (array) input('category_id', []))), 0, 4);
         foreach ($catIds as $cid) {
@@ -97,21 +97,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     flash('error', implode(' ', $errors));
 }
 
-$points = $id ? db_all('SELECT * FROM tour_route_points WHERE tour_id=? ORDER BY sort_order', [$id]) : [];
-$allGuides = db_all('SELECT id, full_name FROM guides ORDER BY full_name');
-$selGuides = $id ? array_column(db_all('SELECT guide_id FROM tour_guides WHERE tour_id=? ORDER BY sort_order', [$id]), 'guide_id') : [];
+$points        = $id ? db_all('SELECT * FROM tour_route_points WHERE tour_id=? ORDER BY sort_order', [$id]) : [];
+$allGuides     = db_all('SELECT id, full_name FROM guides ORDER BY sort_order, full_name');
+$selGuides     = $id ? array_column(db_all('SELECT guide_id FROM tour_guides WHERE tour_id=? ORDER BY sort_order', [$id]), 'guide_id') : [];
 $allCategories = db_all('SELECT id, title_en FROM categories ORDER BY sort_order, id');
 $selCategories = $id ? array_column(db_all('SELECT category_id FROM tour_categories WHERE tour_id=?', [$id]), 'category_id') : [];
-$googleKey = setting('google_maps_api_key', '');
+$googleKey     = setting('google_maps_api_key', '');
 
-// When a submit fails validation, re-render with what the user just typed
-// (never lose their work) instead of the stored row.
+// When validation fails, re-render what was typed rather than the stored row —
+// nobody should lose a long bilingual description to a bad date.
 $reposted = $_SERVER['REQUEST_METHOD'] === 'POST';
 $pick = static function (string $postKey, $stored) use ($reposted) {
     return $reposted ? (string) ($_POST[$postKey] ?? '') : (string) ($stored ?? '');
 };
 if ($reposted) {
-    $selGuides = array_map('intval', (array) ($_POST['guide_id'] ?? []));
+    $selGuides     = array_map('intval', (array) ($_POST['guide_id'] ?? []));
     $selCategories = array_map('intval', (array) ($_POST['category_id'] ?? []));
     $points = [];
     foreach ((array) ($_POST['rp_lat'] ?? []) as $i => $lat) {
@@ -125,157 +125,184 @@ if ($reposted) {
 }
 
 $page = [
-    'title' => $tour ? 'Edit tour' : 'New tour',
-    'section' => 'Tours', 'active' => 'tours',
-    'vendor_css' => array_merge(quill_vendor_css(), ['libs/choices.js/public/assets/styles/choices.min.css']),
+    'title'    => $tour ? 'Edit tour' : 'New tour',
+    'subtitle' => $tour ? ($tour['title_en'] ?: $tour['title_ru'] ?: '') : 'Add a trip to the catalogue.',
+    'active'   => 'tours',
+    'back'     => ['href' => url('tours'), 'label' => 'All tours'],
+    'vendor_css' => array_merge(quill_vendor_css(), choices_vendor_css()),
 ];
+if ($tour) {
+    $page['actions'] = ui_btn('View on site', [
+        'href'  => public_site_url('tour.php?slug=' . rawurlencode($tour['slug'])),
+        'icon'  => 'ri-external-link-line',
+        'attrs' => ['target' => '_blank', 'rel' => 'noopener'],
+    ]);
+}
 require __DIR__ . '/partials/head.php';
 ?>
-<form method="post" enctype="multipart/form-data" action="<?= url('tour-edit' . ($id ? '?id=' . $id : '')) ?>">
+
+<form method="post" enctype="multipart/form-data" data-guard
+      action="<?= url('tour-edit' . ($id ? '?id=' . $id : '')) ?>">
     <?= csrf_field() ?>
-    <div class="row g-3">
-        <div class="col-12 col-lg-8">
-            <div class="card">
-                <div class="card-header"><h5 class="card-title mb-0">Title &amp; description</h5></div>
-                <div class="card-body">
-                    <?php lang_tabs('tour', function ($l) use ($tour, $pick) { ?>
-                        <div class="mb-3">
-                            <label class="form-label">Title (<?= strtoupper($l) ?>)</label>
-                            <input type="text" name="title_<?= $l ?>" class="form-control" value="<?= e($pick("title_$l", $tour["title_$l"] ?? '')) ?>">
+
+    <div class="split split--main-aside">
+        <div class="stack">
+            <section class="card">
+                <div class="card__head">
+                    <div>
+                        <h2 class="card__title">Title &amp; description</h2>
+                        <p class="card__sub">Shown on the tour page. At least one language is required.</p>
+                    </div>
+                </div>
+                <div class="card__body">
+                    <?php ui_lang_tabs('tour', function ($l) use ($tour, $pick) { ?>
+                        <?php ui_field("title_$l", 'Title (' . strtoupper($l) . ')', [
+                            'value'       => $pick("title_$l", $tour["title_$l"] ?? ''),
+                            'placeholder' => $l === 'en' ? 'e.g. Chimgan Weekend Escape' : 'например, Выходные в Чимгане',
+                            'id'          => "title_$l",
+                        ]); ?>
+                        <div class="field">
+                            <label class="label">Description (<?= strtoupper($l) ?>)</label>
+                            <?php ui_editor("description_$l", $pick("description_$l", $tour["description_{$l}_html"] ?? ''), 'Describe the trip…'); ?>
                         </div>
-                        <label class="form-label">Description (<?= strtoupper($l) ?>)</label>
-                        <?php editor_field("description_$l", $pick("description_$l", $tour["description_{$l}_html"] ?? ''), 'Describe the trip…'); ?>
                     <?php }); ?>
                 </div>
-            </div>
+            </section>
 
-            <!-- Route -->
-            <div class="card">
-                <div class="card-header d-flex align-items-center">
-                    <h5 class="card-title mb-0">Route</h5>
-                    <button type="button" class="btn btn-sm btn-light ms-auto" id="addPoint"><i class="ri-add-line"></i> Add point</button>
-                </div>
-                <div class="card-body">
-                    <?php if ($googleKey): ?>
-                        <div id="gmap" style="width:100%;height:320px;border-radius:8px;background:var(--bs-secondary-bg)" class="mb-3"></div>
-                        <p class="text-muted fs-12">Click the map to drop pins. Drag rows? edit coordinates below. Pins connect in order.</p>
-                    <?php else: ?>
-                        <div class="alert alert-warning fs-13 py-2">Add a <a href="<?= url('settings') ?>">Google Maps API Key</a> to pick points on a map. You can still enter coordinates manually below.</div>
-                    <?php endif; ?>
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle mb-0" id="routeTable">
-                            <thead><tr><th style="width:32px">#</th><th>Label (EN)</th><th>Label (RU)</th><th style="width:120px">Lat</th><th style="width:120px">Lng</th><th></th></tr></thead>
-                            <tbody id="routeRows"></tbody>
-                        </table>
+            <section class="card">
+                <div class="card__head">
+                    <div>
+                        <h2 class="card__title">Route</h2>
+                        <p class="card__sub">Points are joined in order to draw the route map.</p>
+                    </div>
+                    <div class="card__head-actions">
+                        <?= ui_btn('Add point', ['icon' => 'ri-map-pin-add-line', 'size' => 'sm', 'type' => 'button', 'attrs' => ['id' => 'addPoint']]) ?>
                     </div>
                 </div>
-            </div>
+                <div class="card__body">
+                    <?php if ($googleKey): ?>
+                        <div id="gmap" class="map-canvas mb-3"></div>
+                        <p class="hint mb-3">
+                            <i class="ri-information-line" aria-hidden="true"></i>
+                            Click the map to drop a pin, or drag an existing pin to move it. You can also type coordinates below.
+                        </p>
+                    <?php else: ?>
+                        <div class="alert alert--warning">
+                            <i class="alert__icon ri-map-pin-line" aria-hidden="true"></i>
+                            <div class="alert__body">
+                                No Google Maps key yet, so the map picker is unavailable — you can still enter coordinates by hand.
+                                <a href="<?= url('integrations') ?>">Add a key in Integrations</a>.
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
+                    <div id="routeRows" class="stack stack--sm"></div>
+
+                    <p class="hint" id="routeEmpty">No route points yet. Add one to start drawing the route.</p>
+                </div>
+            </section>
         </div>
 
-        <div class="col-12 col-lg-4">
-            <div class="card">
-                <div class="card-header"><h5 class="card-title mb-0">Publish</h5></div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label">Status</label>
-                        <select name="status" class="form-select">
-                            <?php foreach (['draft' => 'Draft', 'upcoming' => 'Upcoming', 'past' => 'Past'] as $v => $l): ?>
-                                <option value="<?= $v ?>" <?= $pick('status', $tour['status'] ?? 'draft') === $v ? 'selected' : '' ?>><?= $l ?></option>
-                            <?php endforeach; ?>
-                        </select>
+        <aside class="stack">
+            <section class="card">
+                <div class="card__head"><h2 class="card__title">Publishing</h2></div>
+                <div class="card__body">
+                    <?php ui_select('status', 'Status', [
+                        'draft'    => 'Draft — hidden from the site',
+                        'upcoming' => 'Upcoming — visible and bookable',
+                        'past'     => 'Past — shown in the archive',
+                    ], $pick('status', $tour['status'] ?? 'draft')); ?>
+
+                    <div class="form-grid form-grid--2 mb-3">
+                        <?php ui_field('start_date', 'Start date', ['type' => 'date', 'value' => $pick('start_date', $tour['start_date'] ?? '')]); ?>
+                        <?php ui_field('end_date', 'End date', ['type' => 'date', 'value' => $pick('end_date', $tour['end_date'] ?? ''), 'optional' => true]); ?>
                     </div>
-                    <div class="row g-2 mb-3">
-                        <div class="col-6">
-                            <label class="form-label">Start date</label>
-                            <input type="date" name="start_date" class="form-control" value="<?= e($pick('start_date', $tour['start_date'] ?? '')) ?>">
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label">End date</label>
-                            <input type="date" name="end_date" class="form-control" value="<?= e($pick('end_date', $tour['end_date'] ?? '')) ?>">
-                        </div>
-                        <div class="form-text">Leave end date empty for a single-day tour.</div>
-                    </div>
-                    <div class="mb-0">
-                        <label class="form-label">Slug <span class="text-muted fs-12">(optional)</span></label>
-                        <input type="text" name="slug" class="form-control" value="<?= e($pick('slug', $tour['slug'] ?? '')) ?>" placeholder="auto from title">
+                    <p class="hint mb-3">Leave the end date empty for a single-day trip.</p>
+
+                    <?php ui_field('slug', 'URL slug', [
+                        'value'       => $pick('slug', $tour['slug'] ?? ''),
+                        'placeholder' => 'created from the title',
+                        'optional'    => true,
+                        'hint'        => 'Used in the public web address. Leave blank to generate it automatically.',
+                        'id'          => 'slugField',
+                        'attrs'       => ['data-slug-from' => 'title_en'],
+                    ]); ?>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card__head"><h2 class="card__title">Poster</h2></div>
+                <div class="card__body">
+                    <?php ui_upload('poster', 'Cover image', [
+                        'accept'      => 'image/*',
+                        'hint'        => '4:3 works best · JPG, PNG or WebP · max 8 MB',
+                        'current'     => ($tour && $tour['poster']) ? upload_url($tour['poster']) : '',
+                        'remove_name' => 'remove_poster',
+                    ]); ?>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card__head">
+                    <div>
+                        <h2 class="card__title">Categories</h2>
+                        <p class="card__sub">Up to four</p>
                     </div>
                 </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header"><h5 class="card-title mb-0">Poster (4:3)</h5></div>
-                <div class="card-body text-center">
-                    <?php $hasPoster = $tour && $tour['poster']; ?>
-                    <label class="dnd-upload-wrap <?= $hasPoster ? 'has-preview' : '' ?>">
-                        <i class="ri-upload-cloud-2-line dnd-upload-icon"></i>
-                        <div class="dnd-upload-text">Drag and drop or press to upload</div>
-                        <div class="dnd-upload-subtext">JPG, PNG, WebP</div>
-                        <input type="file" name="poster" accept="image/*" id="posterInput" data-remove-target="rmPoster">
-                        <div class="dnd-preview-container">
-                            <?php if ($hasPoster): ?>
-                                <img src="<?= e(upload_url($tour['poster'])) ?>" class="dnd-preview-img">
-                            <?php endif; ?>
-                        </div>
-                        <div class="dnd-loader">
-                            <div class="spinner-border text-primary" role="status"></div>
-                        </div>
-                    </label>
-                    <?php if ($hasPoster): ?>
-                        <div class="form-check mt-2 text-start d-none">
-                            <input class="form-check-input" type="checkbox" name="remove_poster" id="rmPoster" value="1">
-                            <label class="form-check-label fs-13" for="rmPoster">Remove poster</label>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header"><h5 class="card-title mb-0">Categories (Max 4)</h5></div>
-                <div class="card-body">
+                <div class="card__body">
                     <?php if (!$allCategories): ?>
-                        <p class="text-muted fs-13 mb-0">No categories. <a href="<?= url('category-edit') ?>">Create one</a>.</p>
+                        <p class="t-sm t-muted mb-0">
+                            No categories exist yet. <a href="<?= url('category-edit') ?>">Create one</a> to tag this tour.
+                        </p>
                     <?php else: ?>
+                        <label class="sr-only" for="categorySelect">Categories</label>
                         <select name="category_id[]" id="categorySelect" multiple>
                             <?php foreach ($allCategories as $c): ?>
-                                <option value="<?= (int) $c['id'] ?>" <?= in_array($c['id'], $selCategories) ? 'selected' : '' ?>><?= e($c['title_en']) ?></option>
+                                <option value="<?= (int) $c['id'] ?>" <?= in_array((int) $c['id'], $selCategories, true) ? 'selected' : '' ?>>
+                                    <?= e($c['title_en']) ?>
+                                </option>
                             <?php endforeach; ?>
                         </select>
                     <?php endif; ?>
                 </div>
-            </div>
+            </section>
 
-            <div class="card">
-                <div class="card-header"><h5 class="card-title mb-0">Guides</h5></div>
-                <div class="card-body">
+            <section class="card">
+                <div class="card__head"><h2 class="card__title">Guides</h2></div>
+                <div class="card__body">
                     <?php if (!$allGuides): ?>
-                        <p class="text-muted fs-13 mb-0">No guides yet. <a href="<?= url('guide-edit') ?>">Create one</a> to attach.</p>
+                        <p class="t-sm t-muted mb-0">
+                            No guides yet. <a href="<?= url('guide-edit') ?>">Add a guide</a> to attach one here.
+                        </p>
                     <?php else: ?>
+                        <label class="sr-only" for="guideSelect">Guides</label>
                         <select name="guide_id[]" id="guideSelect" multiple>
                             <?php foreach ($allGuides as $g): ?>
-                                <option value="<?= (int) $g['id'] ?>" <?= in_array($g['id'], $selGuides) ? 'selected' : '' ?>><?= e($g['full_name']) ?></option>
+                                <option value="<?= (int) $g['id'] ?>" <?= in_array((int) $g['id'], $selGuides, true) ? 'selected' : '' ?>>
+                                    <?= e($g['full_name']) ?>
+                                </option>
                             <?php endforeach; ?>
                         </select>
                     <?php endif; ?>
                 </div>
-            </div>
-
-            <div class="d-grid gap-2">
-                <button class="btn btn-primary"><i class="ri-save-line me-1"></i> Save tour</button>
-                <a href="<?= url('tours') ?>" class="btn btn-light">Cancel</a>
-            </div>
-        </div>
+            </section>
+        </aside>
     </div>
+
+    <?php ui_sticky_actions($tour ? 'Save tour' : 'Create tour', ['cancel_href' => url('tours')]); ?>
 </form>
 
 <template id="routeRowTpl">
-    <tr class="route-row">
-        <td class="idx text-muted"></td>
-        <td><input type="text" name="rp_label_en[]" class="form-control form-control-sm"></td>
-        <td><input type="text" name="rp_label_ru[]" class="form-control form-control-sm"></td>
-        <td><input type="text" name="rp_lat[]" class="form-control form-control-sm rp-lat"></td>
-        <td><input type="text" name="rp_lng[]" class="form-control form-control-sm rp-lng"></td>
-        <td><button type="button" class="btn btn-sm btn-light text-danger rp-remove"><i class="ri-close-line"></i></button></td>
-    </tr>
+    <div class="repeat-row route-row">
+        <span class="repeat-row__index idx" aria-hidden="true"></span>
+        <input type="text" name="rp_label_en[]" class="input" style="flex:1 1 150px" placeholder="Label (EN)" aria-label="Point label in English">
+        <input type="text" name="rp_label_ru[]" class="input" style="flex:1 1 150px" placeholder="Label (RU)" aria-label="Point label in Russian">
+        <input type="text" name="rp_lat[]" class="input rp-lat" style="flex:0 1 118px" placeholder="Latitude" aria-label="Latitude" inputmode="decimal">
+        <input type="text" name="rp_lng[]" class="input rp-lng" style="flex:0 1 118px" placeholder="Longitude" aria-label="Longitude" inputmode="decimal">
+        <button type="button" class="btn btn--icon btn--sm btn--danger-ghost rp-remove" aria-label="Remove this point" title="Remove this point">
+            <i class="ri-close-line" aria-hidden="true"></i>
+        </button>
+    </div>
 </template>
 
 <?php
@@ -283,24 +310,24 @@ $existingPoints = array_map(static fn($p) => [
     'en' => $p['label_en'], 'ru' => $p['label_ru'], 'lat' => $p['lat'], 'lng' => $p['lng'],
 ], $points);
 
-$vendorJs = quill_vendor_js();
-$vendorJs[] = 'libs/choices.js/public/assets/scripts/choices.min.js';
-if ($googleKey) {
-    // Google script loaded via inline injection below.
-}
-$page['vendor_js'] = $vendorJs;
+$page['vendor_js'] = array_merge(quill_vendor_js(), choices_vendor_js());
 
 $page['inline_js'] = '
 var POINTS = ' . json_encode($existingPoints) . ';
 var GKEY = ' . json_encode($googleKey) . ';
 var rowsBody = document.getElementById("routeRows");
 var rowTpl = document.getElementById("routeRowTpl");
+var routeEmpty = document.getElementById("routeEmpty");
 var gmap = null, mapReady = false;
 var directionsService = null;
 var markers = [];
 var routeLines = [];
 
-function renumber(){ rowsBody.querySelectorAll(".route-row").forEach(function(r,i){ r.querySelector(".idx").textContent = i+1; }); }
+function renumber(){
+  var rows = rowsBody.querySelectorAll(".route-row");
+  rows.forEach(function(r,i){ r.querySelector(".idx").textContent = i+1; });
+  routeEmpty.classList.toggle("hide", rows.length > 0);
+}
 function collect(){ var pts=[]; rowsBody.querySelectorAll(".route-row").forEach(function(r){
   var lat=parseFloat(r.querySelector(".rp-lat").value), lng=parseFloat(r.querySelector(".rp-lng").value);
   if(!isNaN(lat)&&!isNaN(lng)) pts.push([lat,lng]); }); return pts; }
@@ -316,34 +343,27 @@ function addRow(data){
   renumber();
 }
 POINTS.forEach(addRow);
+renumber();
 document.getElementById("addPoint").addEventListener("click", function(){
   var c = mapReady && gmap ? gmap.getCenter() : {lat: 41.3111, lng: 69.2797};
   addRow({lat: c.lat ? c.lat().toFixed(6) : c.lat, lng: c.lng ? c.lng().toFixed(6) : c.lng}); drawMap();
 });
 
 var drawTimeout = null;
-function drawMap(){
-  clearTimeout(drawTimeout);
-  drawTimeout = setTimeout(_doDrawMap, 400);
-}
+function drawMap(){ clearTimeout(drawTimeout); drawTimeout = setTimeout(_doDrawMap, 400); }
 
 function _doDrawMap(){
   if(!mapReady || !gmap || !window.google) return;
-  
+
   markers.forEach(function(m){ m.setMap(null); }); markers = [];
   routeLines.forEach(function(l){ l.setMap(null); }); routeLines = [];
-  
+
   var pts = collect();
   var bounds = new google.maps.LatLngBounds();
-  
-  pts.forEach(function(p,i){ 
+
+  pts.forEach(function(p,i){
     var pos = {lat: p[0], lng: p[1]};
-    var pm = new google.maps.Marker({
-      position: pos,
-      map: gmap,
-      label: (i+1).toString(),
-      draggable: true
-    });
+    var pm = new google.maps.Marker({ position: pos, map: gmap, label: (i+1).toString(), draggable: true });
     pm.addListener("dragend", function(e){
       var c = e.latLng;
       var rows = rowsBody.querySelectorAll(".route-row");
@@ -356,8 +376,8 @@ function _doDrawMap(){
     markers.push(pm);
     bounds.extend(pos);
   });
-  
-  if(pts.length>1){ 
+
+  if(pts.length>1){
     for(let i=0; i<pts.length-1; i++){
       (function(start, end){
         function getDist(p1, p2) {
@@ -368,19 +388,15 @@ function _doDrawMap(){
         }
         var startObj = {lat: start[0], lng: start[1]};
         var endObj = {lat: end[0], lng: end[1]};
-        directionsService.route({
-          origin: startObj,
-          destination: endObj,
-          travelMode: google.maps.TravelMode.DRIVING
-        }, function(response, status){
+        directionsService.route({ origin: startObj, destination: endObj, travelMode: google.maps.TravelMode.DRIVING },
+        function(response, status){
           var lineSymbol = { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 };
           function drawDashed(p1, p2) {
-            var pl = new google.maps.Polyline({
+            routeLines.push(new google.maps.Polyline({
               path: [p1, p2], strokeOpacity: 0,
               icons: [{icon: lineSymbol, offset: "0", repeat: "15px"}],
-              strokeColor: "#63ab45", strokeWeight: 4, map: gmap
-            });
-            routeLines.push(pl);
+              strokeColor: "#bb9157", strokeWeight: 4, map: gmap
+            }));
           }
           if(status === "OK" && response.routes && response.routes.length > 0) {
             var path = response.routes[0].overview_path;
@@ -390,27 +406,14 @@ function _doDrawMap(){
               var dStartRoad = getDist(startObj, {lat: firstC.lat(), lng: firstC.lng()});
               var dEndRoad = getDist(endObj, {lat: lastC.lat(), lng: lastC.lng()});
               var dTotal = getDist(startObj, endObj);
-
-              if (dTotal > 0 && (dStartRoad + dEndRoad > dTotal * 0.8)) {
-                drawDashed(startObj, endObj);
-                return;
-              }
-
-              var polyline = new google.maps.Polyline({
-                path: path,
-                strokeColor: "#63ab45",
-                strokeOpacity: 0.9,
-                strokeWeight: 4,
-                map: gmap
-              });
-              routeLines.push(polyline);
-
+              if (dTotal > 0 && (dStartRoad + dEndRoad > dTotal * 0.8)) { drawDashed(startObj, endObj); return; }
+              routeLines.push(new google.maps.Polyline({
+                path: path, strokeColor: "#0d2444", strokeOpacity: 0.9, strokeWeight: 4, map: gmap
+              }));
               if (dStartRoad > 10) drawDashed(startObj, firstC);
               if (dEndRoad > 10) drawDashed(lastC, endObj);
             }
-          } else {
-            drawDashed(startObj, endObj);
-          }
+          } else { drawDashed(startObj, endObj); }
         });
       })(pts[i], pts[i+1]);
     }
@@ -420,6 +423,7 @@ function _doDrawMap(){
     gmap.setZoom(10);
   }
 }
+
 if (GKEY) {
   window.initMap = function() {
     var c = POINTS.length ? {lat: parseFloat(POINTS[0].lat), lng: parseFloat(POINTS[0].lng)} : {lat: 41.3111, lng: 69.2797};
@@ -427,32 +431,26 @@ if (GKEY) {
       center: c, zoom: 6, streetViewControl: false, mapTypeControl: false
     });
     directionsService = new google.maps.DirectionsService();
-    mapReady = true; 
+    mapReady = true;
     drawMap();
-    gmap.addListener("click", function(e){ 
-      var co = e.latLng; 
-      addRow({lat: co.lat().toFixed(6), lng: co.lng().toFixed(6)}); 
-      drawMap(); 
+    gmap.addListener("click", function(e){
+      var co = e.latLng;
+      addRow({lat: co.lat().toFixed(6), lng: co.lng().toFixed(6)});
+      drawMap();
     });
   };
   var s = document.createElement("script");
   s.src = "https://maps.googleapis.com/maps/api/js?key="+encodeURIComponent(GKEY)+"&callback=initMap";
-  s.async = true;
-  s.defer = true;
+  s.async = true; s.defer = true;
   document.head.appendChild(s);
 }
 
-// Guides & Categories multi-select
 if (document.getElementById("guideSelect") && window.Choices) {
   new Choices("#guideSelect", {removeItemButton:true, shouldSort:false, placeholderValue:"Attach guides…"});
 }
 if (document.getElementById("categorySelect") && window.Choices) {
-  new Choices("#categorySelect", {removeItemButton:true, shouldSort:false, maxItemCount: 4, placeholderValue:"Select up to 4 categories…"});
+  new Choices("#categorySelect", {removeItemButton:true, shouldSort:false, maxItemCount:4, placeholderValue:"Choose up to 4…"});
 }
-
-// poster preview
-var pi=document.getElementById("posterInput");
-pi && pi.addEventListener("change", function(){var f=pi.files[0];if(!f)return;var p=document.getElementById("posterPreview");p.src=URL.createObjectURL(f);p.style.display="";});
 ';
 require __DIR__ . '/partials/foot.php';
 ?>

@@ -2,72 +2,116 @@
 require __DIR__ . '/app/bootstrap.php';
 require_admin();
 
-$id = (int) input('id', 0);
+$id  = (int) input('id', 0);
 $cat = $id ? db_one("SELECT * FROM categories WHERE id=?", [$id]) : null;
+if ($id && !$cat) { flash('error', 'That category no longer exists.'); redirect('categories'); }
+
+$errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
     $title_en = trim((string) input('title_en'));
     $title_ru = trim((string) input('title_ru'));
-    $slug = trim((string) input('slug'));
-    $sort_order = (int) input('sort_order', 0);
+    $slug     = trim((string) input('slug'));
 
-    if (!$title_en || !$title_ru || !$slug) {
-        flash('danger', 'Please fill in all required fields.');
-    } else {
+    if ($title_en === '') { $errors['title_en'] = 'An English title is required.'; }
+    if ($title_ru === '') { $errors['title_ru'] = 'A Russian title is required.'; }
+
+    $slug = $slug !== '' ? slugify($slug) : slugify($title_en ?: $title_ru);
+    if ($slug === '' || $slug === 'item') {
+        $errors['slug'] = 'A URL slug is required.';
+    } elseif (db_val('SELECT 1 FROM categories WHERE slug=? AND id<>?', [$slug, $id])) {
+        $errors['slug'] = 'Another category already uses that slug.';
+    }
+
+    if (!$errors) {
         if ($cat) {
-            db_run("UPDATE categories SET slug=?, title_en=?, title_ru=?, sort_order=? WHERE id=?", 
-                [$slug, $title_en, $title_ru, $sort_order, $id]);
-            flash('success', 'Category updated.');
+            db_run("UPDATE categories SET slug=?, title_en=?, title_ru=? WHERE id=?", [$slug, $title_en, $title_ru, $id]);
+            flash('success', '“' . $title_en . '” was updated.');
         } else {
-            db_run("INSERT INTO categories (slug, title_en, title_ru, sort_order) VALUES (?, ?, ?, ?)", 
-                [$slug, $title_en, $title_ru, $sort_order]);
-            flash('success', 'Category created.');
+            $next = (int) db_val("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM categories");
+            db_run("INSERT INTO categories (slug, title_en, title_ru, sort_order) VALUES (?,?,?,?)", [$slug, $title_en, $title_ru, $next]);
+            flash('success', '“' . $title_en . '” was created.');
         }
         redirect('categories');
     }
+
+    // The old build flashed type 'danger', which the layout never rendered, and
+    // re-rendered the form from an empty row — so a missing field silently wiped
+    // everything the operator had typed. Errors are now shown per field and the
+    // submitted values are kept.
+    flash('error', 'Please correct the highlighted field' . (count($errors) > 1 ? 's' : '') . '.');
 }
 
-$page = ['title' => $cat ? 'Edit Category' : 'New Category', 'section' => 'Content', 'active' => 'categories'];
+$reposted = $_SERVER['REQUEST_METHOD'] === 'POST';
+$pick = static fn(string $k, $stored) => $reposted ? (string) ($_POST[$k] ?? '') : (string) ($stored ?? '');
+
+$page = [
+    'title'    => $cat ? 'Edit category' : 'New category',
+    'subtitle' => $cat ? $cat['title_en'] : 'Create a tag that visitors can filter tours by.',
+    'active'   => 'categories',
+    'back'     => ['href' => url('categories'), 'label' => 'All categories'],
+];
 require __DIR__ . '/partials/head.php';
+
+/** Inline error text for a field. */
+$err = static function (string $key) use ($errors): string {
+    return isset($errors[$key])
+        ? '<p class="error-text"><i class="ri-error-warning-line" aria-hidden="true"></i>' . e($errors[$key]) . '</p>'
+        : '';
+};
 ?>
 
-<form method="post" action="<?= url('category-edit' . ($id ? '?id=' . $id : '')) ?>">
+<form method="post" data-guard action="<?= url('category-edit' . ($id ? '?id=' . $id : '')) ?>">
     <?= csrf_field() ?>
+
     <div class="row">
-        <div class="col-md-8 mx-auto">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="card-title mb-0"><?= $cat ? 'Edit Category' : 'New Category' ?></h5>
-                </div>
-                <div class="card-body">
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Title (EN) *</label>
-                            <input type="text" name="title_en" class="form-control" value="<?= e($cat['title_en'] ?? '') ?>" required>
+        <div class="col-12 col-lg-8 col-xl-7">
+            <section class="card">
+                <div class="card__head"><h2 class="card__title">Category details</h2></div>
+                <div class="card__body">
+                    <div class="form-grid form-grid--2 mb-4">
+                        <div>
+                            <?php ui_field('title_en', 'Title (English)', [
+                                'value'    => $pick('title_en', $cat['title_en'] ?? ''),
+                                'required' => true,
+                                'id'       => 'title_en',
+                                'placeholder' => 'e.g. Mountains',
+                                'attrs'    => isset($errors['title_en']) ? ['aria-invalid' => 'true'] : [],
+                            ]); ?>
+                            <?= $err('title_en') ?>
                         </div>
-                        <div class="col-md-6 mt-3 mt-md-0">
-                            <label class="form-label">Title (RU) *</label>
-                            <input type="text" name="title_ru" class="form-control" value="<?= e($cat['title_ru'] ?? '') ?>" required>
+                        <div>
+                            <?php ui_field('title_ru', 'Title (Russian)', [
+                                'value'    => $pick('title_ru', $cat['title_ru'] ?? ''),
+                                'required' => true,
+                                'placeholder' => 'например, Горы',
+                                'attrs'    => isset($errors['title_ru']) ? ['aria-invalid' => 'true'] : [],
+                            ]); ?>
+                            <?= $err('title_ru') ?>
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Slug (URL string) *</label>
-                        <input type="text" name="slug" class="form-control" value="<?= e($cat['slug'] ?? '') ?>" required>
-                        <div class="form-text">e.g., "hiking", "historical". Must be unique.</div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Sort Order</label>
-                        <input type="number" name="sort_order" class="form-control" value="<?= $cat['sort_order'] ?? 0 ?>">
-                    </div>
+
+                    <?php ui_field('slug', 'URL slug', [
+                        'value'       => $pick('slug', $cat['slug'] ?? ''),
+                        'placeholder' => 'created from the English title',
+                        'optional'    => true,
+                        'hint'        => 'Lower-case, no spaces. Leave blank to generate it automatically.',
+                        'attrs'       => ['data-slug-from' => 'title_en'] + (isset($errors['slug']) ? ['aria-invalid' => 'true'] : []),
+                    ]); ?>
+                    <?= $err('slug') ?>
+
+                    <p class="hint">
+                        <i class="ri-information-line" aria-hidden="true"></i>
+                        Position in the list is set with the arrows on the
+                        <a href="<?= url('categories') ?>">Categories</a> page.
+                    </p>
                 </div>
-                <div class="card-footer text-end">
-                    <a href="<?= url('categories') ?>" class="btn btn-light me-2">Cancel</a>
-                    <button type="submit" class="btn btn-primary"><i class="ri-save-line me-1"></i> Save Category</button>
-                </div>
-            </div>
+            </section>
         </div>
     </div>
+
+    <?php ui_sticky_actions($cat ? 'Save category' : 'Create category', ['cancel_href' => url('categories')]); ?>
 </form>
 
 <?php require __DIR__ . '/partials/foot.php'; ?>

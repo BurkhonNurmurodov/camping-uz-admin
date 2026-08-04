@@ -1,0 +1,293 @@
+/* ==========================================================================
+   Silk Naviora Admin — design tokens
+   --------------------------------------------------------------------------
+   The single source of truth for colour, type, space, shape, depth and motion.
+   Components never hard-code a value; they reference a token. That is what
+   keeps every screen feeling like one product.
+
+   Palette is derived from the public site's brand:
+     navy #0d2444 · deep #06152a · ink #08101a · gold #bb9157
+   ========================================================================== */
+
+:root {
+    /* ---- Brand ramps ---------------------------------------------------- */
+    /* Navy — structure, primary actions, the sidebar. */
+    --navy-50:  #eef2f8;
+    --navy-100: #d9e2ef;
+    --navy-200: #b3c4dc;
+    --navy-300: #849fc4;
+    --navy-400: #5478a6;
+    --navy-500: #2f5586;
+    --navy-600: #1a3d69;
+    --navy-700: #0d2444;  /* brand */
+    --navy-800: #0a1b34;
+    --navy-900: #06152a;
+    --navy-950: #04101f;
+
+    /* Gold — accent only. Active states, focus, highlights. Never a surface. */
+    --gold-50:  #faf6ef;
+    --gold-100: #f3e9d8;
+    --gold-200: #e6d0ae;
+    --gold-300: #d6b382;
+    --gold-400: #c89e64;
+    --gold-500: #bb9157;  /* brand */
+    --gold-600: #9c7645;
+    --gold-700: #7a5c36;
+
+    /* Neutrals — cool-leaning so they sit correctly beside navy. */
+    --n-0:   #ffffff;
+    --n-25:  #fcfdfe;
+    --n-50:  #f6f8fb;
+    --n-100: #eef1f6;
+    --n-150: #e6eaf1;
+    --n-200: #dce2ec;
+    --n-300: #c4cddb;
+    --n-400: #97a3b6;
+    --n-500: #6d7b91;
+    --n-600: #4f5c70;
+    --n-700: #3a4557;
+    --n-800: #262e3c;
+    --n-900: #171d27;
+    --n-950: #0e131a;
+
+    /* Semantic ramps — only the steps we actually use. */
+    --green-50:  #eaf7ef;  --green-100: #d2eddd;
+    --green-500: #1f9d55;  --green-600: #178741;  --green-700: #136c3a;
+    --amber-50:  #fdf5e7;  --amber-100: #f9e8c6;
+    --amber-500: #b7791f;  --amber-600: #96620f;  --amber-700: #7c5210;
+    --red-50:    #fdeef0;  --red-100:   #fad7db;
+    --red-500:   #d1394f;  --red-600:   #b02a3f;  --red-700:   #8f2233;
+    --blue-50:   #eaf3fd;  --blue-100:  #d3e5fa;
+    --blue-500:  #2570c8;  --blue-600:  #1c5aa5;  --blue-700:  #174a89;
+
+    /* ---- Type ----------------------------------------------------------- */
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    /* 14px base — the right density for an operations tool. */
+    --fs-2xs:  0.6875rem;  /* 11 — micro labels, table meta */
+    --fs-xs:   0.75rem;    /* 12 — hints, timestamps */
+    --fs-sm:   0.8125rem;  /* 13 — secondary text, dense tables */
+    --fs-base: 0.875rem;   /* 14 — body, controls */
+    --fs-md:   0.9375rem;  /* 15 — emphasised body */
+    --fs-lg:   1.0625rem;  /* 17 — card titles */
+    --fs-xl:   1.25rem;    /* 20 — page title */
+    --fs-2xl:  1.5rem;     /* 24 — dashboard figures */
+    --fs-3xl:  1.875rem;   /* 30 — hero figures */
+
+    --lh-tight: 1.25;
+    --lh-snug:  1.4;
+    --lh-base:  1.55;
+
+    --fw-normal:   400;
+    --fw-medium:   500;
+    --fw-semibold: 600;
+    --fw-bold:     700;
+
+    --tracking-wide: 0.06em;  /* eyebrow / section labels */
+
+    /* ---- Space — 4px rhythm --------------------------------------------- */
+    --sp-1: 0.25rem;   /* 4  */
+    --sp-2: 0.5rem;    /* 8  */
+    --sp-3: 0.75rem;   /* 12 */
+    --sp-4: 1rem;      /* 16 */
+    --sp-5: 1.25rem;   /* 20 */
+    --sp-6: 1.5rem;    /* 24 */
+    --sp-7: 2rem;      /* 32 */
+    --sp-8: 2.5rem;    /* 40 */
+    --sp-9: 3rem;      /* 48 */
+    --sp-10: 4rem;     /* 64 */
+
+    /* ---- Shape ---------------------------------------------------------- */
+    --r-xs:   4px;
+    --r-sm:   6px;
+    --r-md:   8px;
+    --r-lg:   12px;
+    --r-xl:   16px;
+    --r-full: 999px;
+
+    /* ---- Motion --------------------------------------------------------- */
+    --dur-fast: 120ms;
+    --dur:      180ms;
+    --dur-slow: 260ms;
+    --ease:     cubic-bezier(0.2, 0.7, 0.3, 1);
+
+    /* ---- Layout --------------------------------------------------------- */
+    --sidebar-w:      258px;
+    --sidebar-w-mini: 72px;
+    --topbar-h:       60px;
+    --content-max:    1440px;
+    --z-sidebar:  40;
+    --z-topbar:   30;
+    --z-scrim:    35;
+    --z-sticky:   25;
+    --z-dropdown: 60;
+    --z-toast:    80;
+}
+
+/* ==========================================================================
+   Light theme — the default. Semantic aliases live here so components can be
+   written once and simply work in both themes.
+   ========================================================================== */
+/* Anchored to :root deliberately. A bare [data-theme="…"] selector would also
+   match any element carrying that attribute — the theme switch buttons, for
+   one — and silently redefine the entire palette inside it. */
+:root,
+:root[data-theme="light"] {
+    color-scheme: light;
+
+    /* Surfaces, from furthest back to closest to the eye. */
+    --canvas:        var(--n-50);
+    --surface:       var(--n-0);
+    --surface-sunk:  var(--n-50);
+    --surface-raised:var(--n-0);
+    --surface-hover: var(--n-50);
+    --surface-active:var(--n-100);
+
+    /* Sidebar is deliberately navy: an unmistakable anchor that separates
+       "where I can go" from "what I'm working on". */
+    --nav-bg:            var(--navy-700);
+    --nav-bg-hover:      rgba(255, 255, 255, 0.07);
+    --nav-bg-active:     rgba(255, 255, 255, 0.12);
+    --nav-fg:            rgba(255, 255, 255, 0.72);
+    --nav-fg-strong:     #ffffff;
+    --nav-fg-muted:      rgba(255, 255, 255, 0.42);
+    --nav-border:        rgba(255, 255, 255, 0.10);
+    --nav-accent:        var(--gold-400);
+
+    /* Text */
+    --fg:          var(--n-900);
+    --fg-strong:   var(--n-950);
+    --fg-muted:    var(--n-500);
+    --fg-subtle:   var(--n-400);
+    --fg-on-solid: #ffffff;
+
+    /* Lines */
+    --border:        var(--n-200);
+    --border-strong: var(--n-300);
+    --border-subtle: var(--n-150);
+
+    /* Primary action */
+    --primary:          var(--navy-700);
+    --primary-hover:    var(--navy-800);
+    --primary-active:   var(--navy-900);
+    --primary-fg:       #ffffff;
+    --primary-soft:     var(--navy-50);
+    --primary-soft-fg:  var(--navy-700);
+    --primary-ring:     rgba(13, 36, 68, 0.22);
+
+    /* Accent */
+    --accent:         var(--gold-500);
+    --accent-soft:    var(--gold-50);
+    --accent-soft-fg: var(--gold-700);
+
+    /* Status */
+    --success: var(--green-500); --success-soft: var(--green-50); --success-soft-fg: var(--green-700);
+    --warning: var(--amber-500); --warning-soft: var(--amber-50); --warning-soft-fg: var(--amber-700);
+    --danger:  var(--red-500);   --danger-soft:  var(--red-50);   --danger-soft-fg:  var(--red-700);
+    --info:    var(--blue-500);  --info-soft:    var(--blue-50);  --info-soft-fg:    var(--blue-700);
+    --danger-hover: var(--red-600);
+    --danger-ring:  rgba(209, 57, 79, 0.25);
+
+    /* Depth — light, layered, never heavy. */
+    --shadow-xs: 0 1px 2px rgba(13, 24, 44, 0.06);
+    --shadow-sm: 0 1px 2px rgba(13, 24, 44, 0.06), 0 1px 3px rgba(13, 24, 44, 0.05);
+    --shadow-md: 0 2px 4px rgba(13, 24, 44, 0.05), 0 4px 12px rgba(13, 24, 44, 0.08);
+    --shadow-lg: 0 4px 8px rgba(13, 24, 44, 0.06), 0 12px 28px rgba(13, 24, 44, 0.12);
+    --shadow-xl: 0 8px 16px rgba(13, 24, 44, 0.08), 0 24px 48px rgba(13, 24, 44, 0.16);
+
+    --scrim: rgba(10, 20, 38, 0.45);
+}
+
+/* ==========================================================================
+   Dark theme — authored, not derived. Surfaces get lighter as they come
+   forward (the inverse of light mode), which is what makes depth read.
+   ========================================================================== */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --canvas:         #0d1117;
+    --surface:        #151b24;
+    --surface-sunk:   #10161e;
+    --surface-raised: #1b222d;
+    --surface-hover:  #1e2632;
+    --surface-active: #253040;
+
+    --nav-bg:        #0a111c;
+    --nav-bg-hover:  rgba(255, 255, 255, 0.06);
+    --nav-bg-active: rgba(255, 255, 255, 0.10);
+    --nav-fg:        rgba(255, 255, 255, 0.68);
+    --nav-fg-strong: #ffffff;
+    --nav-fg-muted:  rgba(255, 255, 255, 0.38);
+    --nav-border:    rgba(255, 255, 255, 0.08);
+    --nav-accent:    var(--gold-400);
+
+    --fg:          #e8edf4;
+    --fg-strong:   #ffffff;
+    --fg-muted:    #93a1b5;
+    --fg-subtle:   #6b7a90;
+    --fg-on-solid: #ffffff;
+
+    --border:        #2a3442;
+    --border-strong: #3a4657;
+    --border-subtle: #212a36;
+
+    /* Navy is too dark to read as an action on a dark canvas — lift it. */
+    --primary:         #3f74bd;
+    --primary-hover:   #4d84cf;
+    --primary-active:  #5b93dd;
+    --primary-fg:      #ffffff;
+    --primary-soft:    rgba(63, 116, 189, 0.16);
+    --primary-soft-fg: #93bbf0;
+    --primary-ring:    rgba(63, 116, 189, 0.38);
+
+    --accent:         var(--gold-400);
+    --accent-soft:    rgba(200, 158, 100, 0.15);
+    --accent-soft-fg: var(--gold-300);
+
+    --success: #35b26a; --success-soft: rgba(53, 178, 106, 0.15); --success-soft-fg: #6ede9d;
+    --warning: #d69b3a; --warning-soft: rgba(214, 155, 58, 0.15); --warning-soft-fg: #edbf72;
+    --danger:  #e05668; --danger-soft:  rgba(224, 86, 104, 0.15); --danger-soft-fg:  #f58b99;
+    --info:    #4a92e0; --info-soft:    rgba(74, 146, 224, 0.15); --info-soft-fg:    #8cbcf0;
+    --danger-hover: #ec6a7b;
+    --danger-ring:  rgba(224, 86, 104, 0.35);
+
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.4), 0 12px 28px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.45), 0 24px 48px rgba(0, 0, 0, 0.6);
+
+    --scrim: rgba(0, 0, 0, 0.6);
+}
+
+/* Respect the OS when the operator has expressed no preference of their own. */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+        color-scheme: dark;
+
+        --canvas: #0d1117; --surface: #151b24; --surface-sunk: #10161e;
+        --surface-raised: #1b222d; --surface-hover: #1e2632; --surface-active: #253040;
+        --nav-bg: #0a111c; --nav-bg-hover: rgba(255,255,255,.06); --nav-bg-active: rgba(255,255,255,.10);
+        --nav-fg: rgba(255,255,255,.68); --nav-fg-strong: #fff; --nav-fg-muted: rgba(255,255,255,.38);
+        --nav-border: rgba(255,255,255,.08);
+        --fg: #e8edf4; --fg-strong: #fff; --fg-muted: #93a1b5; --fg-subtle: #6b7a90;
+        --border: #2a3442; --border-strong: #3a4657; --border-subtle: #212a36;
+        --primary: #3f74bd; --primary-hover: #4d84cf; --primary-active: #5b93dd;
+        --primary-soft: rgba(63,116,189,.16); --primary-soft-fg: #93bbf0;
+        --primary-ring: rgba(63,116,189,.38);
+        --accent: var(--gold-400); --accent-soft: rgba(200,158,100,.15); --accent-soft-fg: var(--gold-300);
+        --success: #35b26a; --success-soft: rgba(53,178,106,.15); --success-soft-fg: #6ede9d;
+        --warning: #d69b3a; --warning-soft: rgba(214,155,58,.15); --warning-soft-fg: #edbf72;
+        --danger: #e05668; --danger-soft: rgba(224,86,104,.15); --danger-soft-fg: #f58b99;
+        --info: #4a92e0; --info-soft: rgba(74,146,224,.15); --info-soft-fg: #8cbcf0;
+        --danger-hover: #ec6a7b; --danger-ring: rgba(224,86,104,.35);
+        --shadow-xs: 0 1px 2px rgba(0,0,0,.4);
+        --shadow-sm: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.3);
+        --shadow-md: 0 2px 4px rgba(0,0,0,.35), 0 4px 12px rgba(0,0,0,.45);
+        --shadow-lg: 0 4px 8px rgba(0,0,0,.4), 0 12px 28px rgba(0,0,0,.5);
+        --shadow-xl: 0 8px 16px rgba(0,0,0,.45), 0 24px 48px rgba(0,0,0,.6);
+        --scrim: rgba(0,0,0,.6);
+    }
+}
