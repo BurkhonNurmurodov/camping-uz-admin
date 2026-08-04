@@ -591,6 +591,13 @@ require __DIR__ . '/partials/head.php';
 
     /* Attachment cards — one look for the reader strip and for thread messages,
        tinted by file type so a spreadsheet doesn't read like a deck. */
+    .mail-attach,
+    .mail-attach:hover,
+    .mail-attach:focus,
+    .mail-attach:active {
+        text-decoration: none !important;
+        color: var(--fg-strong) !important;
+    }
     .mail-attach {
         --att-tint: var(--fg-muted);
         box-sizing: border-box;
@@ -603,10 +610,10 @@ require __DIR__ . '/partials/head.php';
         border: 1px solid var(--border);
         border-radius: 12px;
         background: var(--surface);
-        text-decoration: none;
         transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
     }
-    .mail-attach:hover {
+    .mail-attach:hover,
+    .mail-attach:focus {
         background: var(--surface-hover);
         border-color: color-mix(in srgb, var(--att-tint) 45%, var(--border));
         box-shadow: var(--shadow-sm);
