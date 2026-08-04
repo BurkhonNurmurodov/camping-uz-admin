@@ -897,7 +897,15 @@ class MailClient {
         $plain = (string) $plain;
 
         if (trim($html) !== '') {
-            return $this->splitQuotedHtml($this->sanitizeHtml($html));
+            $rendered = $this->splitQuotedHtml($this->sanitizeHtml($html));
+            // Ensure line breaks are preserved if HTML body lacks line-breaking HTML tags
+            if (!preg_match('/<(?:br|p|div|ul|ol|li|table|h[1-6]|blockquote|tr|hr)[^>]*>/i', $rendered['body']) && strpos($rendered['body'], "\n") !== false) {
+                $rendered['body'] = nl2br($rendered['body']);
+            }
+            if (!preg_match('/<(?:br|p|div|ul|ol|li|table|h[1-6]|blockquote|tr|hr)[^>]*>/i', $rendered['quoted']) && strpos($rendered['quoted'], "\n") !== false) {
+                $rendered['quoted'] = nl2br($rendered['quoted']);
+            }
+            return $rendered;
         }
         return $this->splitQuotedPlain($plain);
     }
@@ -1200,8 +1208,12 @@ class MailClient {
                 $mail->isHTML(true);
                 $mail->CharSet = 'UTF-8';
                 $mail->Subject = $subject;
+                // If the body doesn't contain block-level HTML formatting or <br> tags, convert newlines to <br>
+                if (!preg_match('/<(?:br|p|div|ul|ol|li|table|h[1-6]|blockquote|tr|hr)[^>]*>/i', $body) && strpos($body, "\n") !== false) {
+                    $body = nl2br($body);
+                }
                 $mail->Body    = $body;
-                $mail->AltBody = strip_tags($body);
+                $mail->AltBody = strip_tags(str_replace(['<br>', '<br/>', '<br />', '</p>', '</div>'], "\n", $body));
 
                 $mail->send();
                 while (ob_get_level()) { ob_end_clean(); }

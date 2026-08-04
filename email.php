@@ -684,6 +684,70 @@ require __DIR__ . '/partials/head.php';
     .att-media   { --att-tint: var(--att-teal); }
     .att-code    { --att-tint: var(--primary); }
 
+    /* Lightweight Rich Text Editor */
+    .mail-editor-wrapper {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface);
+        overflow: hidden;
+        transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .mail-editor-wrapper:focus-within {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+    }
+    .mail-editor-toolbar {
+        background: var(--surface-sunk);
+        border-bottom: 1px solid var(--border);
+        padding: 6px 10px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+    .mail-editor-toolbar .btn-tool {
+        border: none;
+        background: transparent;
+        color: var(--fg-muted);
+        width: 30px;
+        height: 30px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        cursor: pointer;
+        transition: background-color 0.15s, color 0.15s;
+    }
+    .mail-editor-toolbar .btn-tool:hover {
+        background: rgba(0, 0, 0, 0.06);
+        color: var(--fg-strong);
+    }
+    .mail-editor-content {
+        min-height: 220px;
+        max-height: 420px;
+        overflow-y: auto;
+        padding: 14px 16px;
+        outline: none;
+        line-height: 1.6;
+        color: var(--fg-strong);
+        word-break: break-word;
+    }
+    .mail-editor-content[contenteditable="true"]:empty:before {
+        content: attr(data-placeholder);
+        color: var(--fg-muted);
+        pointer-events: none;
+        display: block;
+        font-style: italic;
+    }
+    .mail-editor-content p, .mail-editor-content ul, .mail-editor-content ol {
+        margin-bottom: 0.75rem;
+    }
+    .mail-editor-content a {
+        color: var(--primary);
+        text-decoration: underline;
+    }
+
     @media (max-width: 991.98px) {
         .gmail-workspace {
             flex-direction: column;
@@ -988,7 +1052,22 @@ require __DIR__ . '/partials/head.php';
                 </div>
                 <!-- Body -->
                 <div>
-                    <textarea name="body" class="form-control border-0 px-1 shadow-none fs-15" rows="10" placeholder="Write your email here..." required style="resize: none; line-height: 1.6;"></textarea>
+                    <div class="mail-editor-wrapper mt-2">
+                        <div class="mail-editor-toolbar">
+                            <button type="button" class="btn-tool" title="Bold" onmousedown="event.preventDefault(); execMailCommand('bold');"><i class="ri-bold fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Italic" onmousedown="event.preventDefault(); execMailCommand('italic');"><i class="ri-italic fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Underline" onmousedown="event.preventDefault(); execMailCommand('underline');"><i class="ri-underline fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Strikethrough" onmousedown="event.preventDefault(); execMailCommand('strikethrough');"><i class="ri-strikethrough fs-16"></i></button>
+                            <span class="border-end py-2 mx-1 opacity-25"></span>
+                            <button type="button" class="btn-tool" title="Bullet List" onmousedown="event.preventDefault(); execMailCommand('insertUnorderedList');"><i class="ri-list-unordered fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Numbered List" onmousedown="event.preventDefault(); execMailCommand('insertOrderedList');"><i class="ri-list-ordered fs-16"></i></button>
+                            <span class="border-end py-2 mx-1 opacity-25"></span>
+                            <button type="button" class="btn-tool" title="Insert Link" onmousedown="event.preventDefault(); insertMailLink();"><i class="ri-links-line fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Remove Formatting" onmousedown="event.preventDefault(); execMailCommand('removeFormat');"><i class="ri-format-clear fs-16"></i></button>
+                        </div>
+                        <div id="composeEditor" class="mail-editor-content" contenteditable="true" data-placeholder="Write your email here..." style="min-height: 240px;"></div>
+                        <textarea name="body" id="composeBody" class="d-none"></textarea>
+                    </div>
                 </div>
                 <!-- Attachments -->
                 <div class="mt-3">
@@ -1000,7 +1079,7 @@ require __DIR__ . '/partials/head.php';
                 </div>
             </div>
             <div class="modal-footer bg-light px-4 py-3 d-flex justify-content-between">
-                <button type="button" class="btn btn-outline-secondary px-4 rounded-pill" data-bs-dismiss="modal">Discard</button>
+                <button type="button" class="btn btn-outline-secondary px-4 rounded-pill" data-bs-dismiss="modal" onclick="let ed = document.getElementById('composeEditor'); if(ed) ed.innerHTML=''; this.closest('form').reset();">Discard</button>
                 <button type="submit" class="btn btn-primary px-5 rounded-pill fw-semibold shadow-sm"><i class="ri-send-plane-2-fill me-2"></i>Send</button>
             </div>
         </form>
@@ -1053,7 +1132,22 @@ require __DIR__ . '/partials/head.php';
                 </div>
                 <!-- Reply body -->
                 <div>
-                    <textarea name="body" id="replyBody" class="form-control border-0 px-1 shadow-none fs-15" rows="6" placeholder="Type your response..." required style="resize: none; line-height: 1.6;"></textarea>
+                    <div class="mail-editor-wrapper mt-2">
+                        <div class="mail-editor-toolbar">
+                            <button type="button" class="btn-tool" title="Bold" onmousedown="event.preventDefault(); execMailCommand('bold');"><i class="ri-bold fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Italic" onmousedown="event.preventDefault(); execMailCommand('italic');"><i class="ri-italic fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Underline" onmousedown="event.preventDefault(); execMailCommand('underline');"><i class="ri-underline fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Strikethrough" onmousedown="event.preventDefault(); execMailCommand('strikethrough');"><i class="ri-strikethrough fs-16"></i></button>
+                            <span class="border-end py-2 mx-1 opacity-25"></span>
+                            <button type="button" class="btn-tool" title="Bullet List" onmousedown="event.preventDefault(); execMailCommand('insertUnorderedList');"><i class="ri-list-unordered fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Numbered List" onmousedown="event.preventDefault(); execMailCommand('insertOrderedList');"><i class="ri-list-ordered fs-16"></i></button>
+                            <span class="border-end py-2 mx-1 opacity-25"></span>
+                            <button type="button" class="btn-tool" title="Insert Link" onmousedown="event.preventDefault(); insertMailLink();"><i class="ri-links-line fs-16"></i></button>
+                            <button type="button" class="btn-tool" title="Remove Formatting" onmousedown="event.preventDefault(); execMailCommand('removeFormat');"><i class="ri-format-clear fs-16"></i></button>
+                        </div>
+                        <div id="replyEditor" class="mail-editor-content" contenteditable="true" data-placeholder="Type your response..." style="min-height: 180px;"></div>
+                        <textarea name="body" id="replyBody" class="d-none"></textarea>
+                    </div>
                 </div>
                 <!-- Quoted original (read-only visual context) -->
                 <div class="mt-3 border-start border-3 border-primary-subtle ps-3" id="replyQuotedBlock" style="max-height: 200px; overflow-y: auto;">
@@ -1070,7 +1164,7 @@ require __DIR__ . '/partials/head.php';
                 </div>
             </div>
             <div class="modal-footer bg-light px-4 py-3 d-flex justify-content-between">
-                <button type="button" class="btn btn-outline-secondary px-4 rounded-pill" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-outline-secondary px-4 rounded-pill" data-bs-dismiss="modal" onclick="let ed = document.getElementById('replyEditor'); if(ed) ed.innerHTML=''; this.closest('form').reset();">Cancel</button>
                 <button type="submit" class="btn btn-primary px-5 rounded-pill fw-semibold shadow-sm"><i class="ri-send-plane-2-fill me-2"></i>Send Reply</button>
             </div>
         </form>
@@ -1185,6 +1279,19 @@ document.addEventListener('DOMContentLoaded', function() {
         form.addEventListener('submit', function(e) {
             e.preventDefault();
             
+            // Sync contenteditable editor to hidden textarea before submitting
+            let editorEl = this.querySelector('.mail-editor-content');
+            let hiddenTextarea = this.querySelector('textarea[name="body"]');
+            if (editorEl && hiddenTextarea) {
+                let html = editorEl.innerHTML.trim();
+                if (html === '<br>' || html === '<div><br></div>' || html.replace(/<[^>]*>?/gm, '').trim() === '') {
+                    showGmailToast('Please enter a message before sending.', 'error');
+                    editorEl.focus();
+                    return;
+                }
+                hiddenTextarea.value = html;
+            }
+            
             let formData = new FormData(this);
             formData.append('ajax', '1');
             // Send from whichever mailbox is selected right now, even if the modal
@@ -1193,12 +1300,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // For reply: prepend quoted original into body
             if (this.closest('#replyModal') && currentMessageData) {
-                let replyText = formData.get('body');
+                let replyHtml = formData.get('body');
                 let quotedSender = currentMessageData.fromName || currentMessageData.fromAddress;
                 let quotedDate = currentMessageData.date || '';
-                let quotedBody = currentMessageData.bodyPlain || '';
-                let separator = `\n\n---\nOn ${quotedDate}, ${quotedSender} wrote:\n> ${quotedBody.replace(/\n/g, '\n> ')}`;
-                formData.set('body', replyText + separator);
+                let quotedBody = currentMessageData.bodyPlain || (currentMessageData.body ? currentMessageData.body.replace(/<[^>]*>?/gm, '') : '') || '';
+                let escapedBody = quotedBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+                let separator = `<br><br><blockquote class="gmail_quote" style="margin: 12px 0 0 .8ex; border-left: 2px solid #ccc; padding-left: 1ex; color: #666;"><p>On ${quotedDate}, ${quotedSender} wrote:</p><div>${escapedBody}</div></blockquote>`;
+                formData.set('body', replyHtml + separator);
             }
             
             let modalEl = this.closest('.modal');
@@ -1227,6 +1335,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (submitBtn) submitBtn.disabled = false;
                 if (data.success) {
                     form.reset();
+                    let ed = form.querySelector('.mail-editor-content');
+                    if (ed) ed.innerHTML = '';
                     let msg = data.message || 'Message queued for delivery.';
                     if (data.from && MAIL_ACCOUNTS.length > 1) msg = 'Sent from ' + data.from + '. ' + msg;
                     if (data.transport) msg += ' (via ' + data.transport + ')';
@@ -1260,6 +1370,16 @@ function getAvatarColor(str) {
 function toggleCcBcc(prefix) {
     document.getElementById(prefix + 'CcRow').classList.toggle('d-none');
     document.getElementById(prefix + 'BccRow').classList.toggle('d-none');
+}
+
+function execMailCommand(cmd, arg = null) {
+    document.execCommand(cmd, false, arg);
+}
+function insertMailLink() {
+    let url = prompt('Enter link URL:', 'https://');
+    if (url && url !== 'https://') {
+        document.execCommand('createLink', false, url);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1806,6 +1926,8 @@ function populateThreadReader(thread, anchorId) {
         quotedHeader.innerText = `On ${replyTarget.date}, ${replyName} wrote:`;
         quotedContent.innerText = replyTarget.bodyPlain || '';
     }
+    let rEd = document.getElementById('replyEditor');
+    if (rEd) rEd.innerHTML = '';
 }
 
 function populateEmailReader(data) {
@@ -1879,6 +2001,8 @@ function populateEmailReader(data) {
         quotedHeader.innerText = `On ${data.date}, ${displaySender} wrote:`;
         quotedContent.innerText = data.bodyPlain || (data.body ? data.body.replace(/<[^>]*>?/gm, '') : '');
     }
+    let rEd = document.getElementById('replyEditor');
+    if (rEd) rEd.innerHTML = '';
 }
 
 function showEmailReader() {
