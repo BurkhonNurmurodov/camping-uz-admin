@@ -582,6 +582,101 @@ require __DIR__ . '/partials/head.php';
         display: none;
     }
 
+    /* Two hues the palette doesn't carry, for image and media attachments. */
+    :root { --att-violet: #6d4bd8; --att-teal: #0f8f9e; }
+    :root[data-theme="dark"] { --att-violet: #a78bfa; --att-teal: #3fc0d0; }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) { --att-violet: #a78bfa; --att-teal: #3fc0d0; }
+    }
+
+    /* Attachment cards — one look for the reader strip and for thread messages,
+       tinted by file type so a spreadsheet doesn't read like a deck. */
+    .mail-attach {
+        --att-tint: var(--fg-muted);
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        max-width: 280px;
+        padding: 8px 12px 8px 8px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface);
+        text-decoration: none;
+        transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+    }
+    .mail-attach:hover {
+        background: var(--surface-hover);
+        border-color: color-mix(in srgb, var(--att-tint) 45%, var(--border));
+        box-shadow: var(--shadow-sm);
+    }
+    .mail-attach-icon {
+        width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        line-height: 1;
+        color: var(--att-tint);
+        background: color-mix(in srgb, var(--att-tint) 14%, transparent);
+    }
+    .mail-attach-text { min-width: 0; }
+    .mail-attach-name {
+        font-size: var(--fs-sm);
+        font-weight: var(--fw-semibold);
+        color: var(--fg-strong);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mail-attach-meta {
+        font-size: var(--fs-2xs);
+        color: var(--fg-muted);
+        letter-spacing: 0.02em;
+    }
+    .mail-attach-dl {
+        margin-left: auto;
+        flex-shrink: 0;
+        font-size: 16px;
+        color: var(--fg-subtle);
+        transition: color 0.15s;
+    }
+    .mail-attach:hover .mail-attach-dl { color: var(--att-tint); }
+
+    /* Compose picks the same tints up at badge scale. */
+    .mail-attach-chip {
+        --att-tint: var(--fg-muted);
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 240px;
+        margin: 0 6px 6px 0;
+        padding: 4px 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--r-full);
+        background: var(--surface);
+        font-size: var(--fs-xs);
+        color: var(--fg);
+    }
+    .mail-attach-chip i { color: var(--att-tint); font-size: 14px; flex-shrink: 0; }
+    .mail-attach-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mail-attach-chip-size { color: var(--fg-muted); flex-shrink: 0; }
+
+    /* File-type tints */
+    .att-pdf     { --att-tint: var(--danger); }
+    .att-sheet   { --att-tint: var(--success); }
+    .att-doc     { --att-tint: var(--info); }
+    .att-slides  { --att-tint: var(--warning); }
+    .att-archive { --att-tint: var(--accent); }
+    .att-image   { --att-tint: var(--att-violet); }
+    .att-media   { --att-tint: var(--att-teal); }
+    .att-code    { --att-tint: var(--primary); }
+
     @media (max-width: 991.98px) {
         .gmail-workspace {
             flex-direction: column;
@@ -1160,15 +1255,108 @@ function toggleCcBcc(prefix) {
     document.getElementById(prefix + 'BccRow').classList.toggle('d-none');
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ATTACHMENT PRESENTATION — shared by compose, the reader and threads
+// ═══════════════════════════════════════════════════════════════════
+const ATTACH_TYPES = [
+    { ext: ['pdf'], icon: 'ri-file-pdf-2-fill', tone: 'att-pdf' },
+    { ext: ['xls', 'xlsx', 'xlsm', 'csv', 'ods'], icon: 'ri-file-excel-2-fill', tone: 'att-sheet' },
+    { ext: ['doc', 'docx', 'rtf', 'odt'], icon: 'ri-file-word-2-fill', tone: 'att-doc' },
+    { ext: ['ppt', 'pptx', 'odp'], icon: 'ri-file-ppt-2-fill', tone: 'att-slides' },
+    { ext: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2'], icon: 'ri-file-zip-fill', tone: 'att-archive' },
+    { ext: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'heic', 'ico'], icon: 'ri-image-fill', tone: 'att-image' },
+    { ext: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv'], icon: 'ri-film-fill', tone: 'att-media' },
+    { ext: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'], icon: 'ri-music-2-fill', tone: 'att-media' },
+    { ext: ['html', 'htm', 'xml', 'json', 'js', 'css', 'php', 'sql'], icon: 'ri-code-s-slash-fill', tone: 'att-code' },
+    { ext: ['txt', 'log', 'md', 'eml'], icon: 'ri-file-text-fill', tone: 'att-text' },
+];
+
+/** Icon, tint class and short label for a filename — everything a card needs. */
+function attachmentType(name) {
+    let str = String(name || '');
+    let dot = str.lastIndexOf('.');
+    let ext = dot > 0 ? str.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    let hit = ATTACH_TYPES.find(t => t.ext.includes(ext));
+    return {
+        icon: hit ? hit.icon : 'ri-file-3-fill',
+        tone: hit ? hit.tone : 'att-file',
+        label: ext && ext.length <= 4 ? ext.toUpperCase() : 'FILE',
+    };
+}
+
+function formatFileSize(bytes) {
+    if (!bytes || bytes < 0) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return Math.round(bytes / 1024) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+/**
+ * One download card. Built as DOM, never as an HTML string: attachment names
+ * come from the message and must not be able to inject markup.
+ */
+function buildAttachmentCard(att) {
+    let type = attachmentType(att.name);
+
+    let a = document.createElement('a');
+    a.className = 'mail-attach ' + type.tone;
+    a.title = att.name || '';
+    if (att.url) {
+        a.href = att.url;
+        a.target = '_blank';
+        a.setAttribute('download', att.name || '');
+        a.rel = 'noopener noreferrer';
+    } else {
+        a.href = '#';
+        a.addEventListener('click', e => { e.preventDefault(); alert('Attachment file not available.'); });
+    }
+
+    let iconWrap = document.createElement('span');
+    iconWrap.className = 'mail-attach-icon';
+    let icon = document.createElement('i');
+    icon.className = type.icon;
+    iconWrap.appendChild(icon);
+
+    let name = document.createElement('div');
+    name.className = 'mail-attach-name';
+    name.textContent = att.name || 'Attachment';
+    let meta = document.createElement('div');
+    meta.className = 'mail-attach-meta';
+    let size = formatFileSize(att.size);
+    meta.textContent = size ? type.label + ' · ' + size : type.label;
+
+    let text = document.createElement('div');
+    text.className = 'mail-attach-text';
+    text.appendChild(name); text.appendChild(meta);
+
+    let dl = document.createElement('i');
+    dl.className = 'ri-download-2-line mail-attach-dl';
+
+    a.appendChild(iconWrap); a.appendChild(text); a.appendChild(dl);
+    return a;
+}
+
 function showAttachNames(input, listId) {
     let el = document.getElementById(listId);
-    if (!input.files.length) { el.innerHTML = ''; return; }
-    let html = '';
+    el.innerHTML = '';
     for (let f of input.files) {
-        let sizeKb = Math.round(f.size / 1024);
-        html += `<span class="badge bg-light text-dark border me-1 mb-1 px-2 py-1 fs-12"><i class="ri-file-line me-1"></i>${f.name} (${sizeKb} KB)</span>`;
+        let type = attachmentType(f.name);
+        let chip = document.createElement('span');
+        chip.className = 'mail-attach-chip ' + type.tone;
+        chip.title = f.name;
+
+        let icon = document.createElement('i');
+        icon.className = type.icon;
+        let name = document.createElement('span');
+        name.className = 'mail-attach-chip-name';
+        name.textContent = f.name;
+        let size = document.createElement('span');
+        size.className = 'mail-attach-chip-size';
+        size.textContent = formatFileSize(f.size);
+
+        chip.appendChild(icon); chip.appendChild(name); chip.appendChild(size);
+        el.appendChild(chip);
     }
-    el.innerHTML = html;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1497,35 +1685,7 @@ function buildQuoteToggle(quotedHtml) {
 function buildAttachmentRow(attachments) {
     let row = document.createElement('div');
     row.className = 'd-flex flex-wrap gap-2 mt-3 pt-3 border-top';
-    attachments.forEach(att => {
-        let sizeStr = att.size ? ` (${Math.round(att.size / 1024)} KB)` : '';
-        let a = document.createElement('a');
-        a.className = 'btn btn-outline-secondary d-flex align-items-center gap-2 px-3 py-2 text-decoration-none rounded-3 bg-light-subtle text-dark border shadow-sm';
-        if (att.url) {
-            a.href = att.url;
-            a.target = '_blank';
-            a.setAttribute('download', att.name || '');
-            a.rel = 'noopener noreferrer';
-        } else {
-            a.href = '#';
-            a.addEventListener('click', e => { e.preventDefault(); alert('Attachment file not available.'); });
-        }
-        // textContent, not innerHTML — attachment names come from the message.
-        let title = document.createElement('div');
-        title.className = 'fw-bold fs-13 text-truncate text-dark';
-        title.style.maxWidth = '240px';
-        title.textContent = att.name;
-        let sub = document.createElement('div');
-        sub.className = 'text-muted fs-11';
-        sub.textContent = 'Click to download' + sizeStr;
-        let text = document.createElement('div');
-        text.className = 'text-start overflow-hidden';
-        text.appendChild(title); text.appendChild(sub);
-        let icon = document.createElement('i');
-        icon.className = 'ri-file-download-fill fs-20 text-primary';
-        a.appendChild(icon); a.appendChild(text);
-        row.appendChild(a);
-    });
+    attachments.forEach(att => row.appendChild(buildAttachmentCard(att)));
     return row;
 }
 
@@ -1693,21 +1853,7 @@ function populateEmailReader(data) {
         attachmentsList.innerHTML = '';
         if (data.attachments && data.attachments.length > 0) {
             attachmentsCount.innerText = data.attachments.length;
-            let attHtml = '';
-            data.attachments.forEach(att => {
-                let sizeStr = att.size ? ` (${Math.round(att.size / 1024)} KB)` : '';
-                let downloadLink = att.url ? att.url : '#';
-                let target = att.url ? `target="_blank" download="${att.name}"` : 'onclick="alert(\'Attachment file not available.\'); return false;"';
-                attHtml += `
-                <a href="${downloadLink}" ${target} class="btn btn-outline-secondary d-flex align-items-center gap-2 px-3 py-2 text-decoration-none rounded-3 bg-light-subtle text-dark border shadow-sm">
-                    <i class="ri-file-download-fill fs-20 text-primary"></i>
-                    <div class="text-start overflow-hidden">
-                        <div class="fw-bold fs-13 text-truncate text-dark" style="max-width: 240px;">${att.name}</div>
-                        <div class="text-muted fs-11">Click to download${sizeStr}</div>
-                    </div>
-                </a>`;
-            });
-            attachmentsList.innerHTML = attHtml;
+            data.attachments.forEach(att => attachmentsList.appendChild(buildAttachmentCard(att)));
             attachmentsContainer.classList.remove('d-none');
         } else {
             attachmentsContainer.classList.add('d-none');
